@@ -6,7 +6,8 @@ import sys
 
 # sys.path.append(str(Path(__file__).parent.parent))
 
-from pinn_buck.config import Parameters, TrainingRun, NOMINAL
+from pinn_buck.config import Parameters, TRUE
+from pinn_buck.io_model import TrainingRun
 from pinn_buck.plot_utils import plot_tracked_parameters, plot_final_percentage_error, plot_final_percentage_error_multi
 
 run_dir = Path(__file__).parent / "RESULTS" / "removed_nn" / "noisy_runs_from_paper_composed_loss"
@@ -41,7 +42,7 @@ for ii in (0, 1, 3, 4):
     if ii ==0: 
        fig, ax = plot_tracked_parameters(
             df=tr,
-            target=NOMINAL,
+            target=TRUE,
             label=label,
             color="black",
             figsize=(18, 10),
@@ -60,7 +61,7 @@ runs_ordered = {GROUP_NUMBER_DICT[ii]: runs[GROUP_NUMBER_DICT[ii]] for ii in (0,
 
 plot_final_percentage_error_multi(
     runs=runs_ordered,
-    target=NOMINAL,
+    target=TRUE,
     figsize=(14, 5),
     select_lowest_loss=False
 )
@@ -71,6 +72,6 @@ plot_final_percentage_error_multi(
 # # # discard the first 1000 iterations for better visualization
 # # df = df.iloc[3:].reset_index(drop=True)
 
-# plot_tracked_parameters(tr, target=NOMINAL)
-# plot_final_percentage_error(tr, target=NOMINAL)
+# plot_tracked_parameters(tr, target=TRUE)
+# plot_final_percentage_error(tr, target=TRUE)
 plt.show()

@@ -16,7 +16,7 @@ import torch.nn as nn
 sys.path.append(str(Path(__file__).parent.parent))
 
 from pinn_buck.config import Parameters, TrainingRun
-from pinn_buck.config import NOMINAL as NOMINAL_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
+from pinn_buck.config import TRUE as TRUE_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
 from pinn_buck.config import _SCALE
 
 from pinn_buck.noise import add_noise_to_Measurement

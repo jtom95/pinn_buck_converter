@@ -2,7 +2,8 @@ from typing import Iterable, List, Dict
 
 import pandas as pd
 import matplotlib.pyplot as plt
-from .config import Parameters, TrainingRun
+from .config import Parameters
+from .io_model import TrainingRun
 import numpy as np
 
 def plot_tracked_parameters(

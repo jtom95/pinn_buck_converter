@@ -6,7 +6,8 @@ import sys
 
 # sys.path.append(str(Path(__file__).parent.parent))
 
-from pinn_buck.config import Parameters, TrainingRun, NOMINAL
+from pinn_buck.config import Parameters, TRUE
+from pinn_buck.io_model import TrainingRun
 from pinn_buck.plot_utils import plot_tracked_parameters, plot_final_percentage_error, plot_final_percentage_error_multi
 
 run_dir = Path(__file__).parent / "RESULTS" / "removed_nn" / "noisy_runs"
@@ -24,7 +25,7 @@ run_ideal = TrainingRun.from_csv(run_dir.parent / "rk4.csv").drop_columns(["lear
 
 fig, ax = plot_tracked_parameters(
     df=run_ideal,
-    target=NOMINAL,
+    target=TRUE,
     label="0",
     color="black",
     figsize=(18, 10),
@@ -44,7 +45,7 @@ for label, tr in ordered_runs:
 
 plot_final_percentage_error_multi(
     runs={"0": run_ideal, **runs},
-    target=NOMINAL,
+    target=TRUE,
     figsize=(14, 5)
 )
 
@@ -54,6 +55,6 @@ plot_final_percentage_error_multi(
 # # # discard the first 1000 iterations for better visualization
 # # df = df.iloc[3:].reset_index(drop=True)
 
-# plot_tracked_parameters(tr, target=NOMINAL)
-# plot_final_percentage_error(tr, target=NOMINAL)
+# plot_tracked_parameters(tr, target=TRUE)
+# plot_final_percentage_error(tr, target=TRUE)
 plt.show()

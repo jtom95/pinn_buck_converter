@@ -16,7 +16,7 @@ import torch.nn as nn
 sys.path.append(str(Path(__file__).parent.parent))
 
 from pinn_buck.config import Parameters, TrainingRun
-from pinn_buck.config import NOMINAL as NOMINAL_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
+from pinn_buck.config import TRUE as TRUE_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
 from pinn_buck.config import _SCALE
 
 
@@ -323,17 +323,21 @@ def train_from_measurement_file(
             loss = compute_loss(pred, x0, y_t)
         else:
             weights_i, weights_v = calculate_L2_weights(X_t, y_t)
-            loss = compute_loss(pred, x0, y_t)
-            loss_L1 = compute_L1_loss(pred, x0, y_t)
-            loss_weighted = compute_weighted_L2_loss(
+            # loss = compute_loss(pred, x0, y_t)
+            # loss_L1 = compute_L1_loss(pred, x0, y_t)
+            
+            # UPDATE the learning rate to 1e-4
+            optimizer.param_groups[0]["lr"] = lr * 0.1
+            
+            loss = compute_weighted_L2_loss(
                 pred, x0, y_t, (weights_i, weights_v)
             ) 
             
-            a1 = 1
-            a2 = 0.3
-            a3 = 1e-3
+            # a1 = 1
+            # a2 = 0.3
+            # a3 = 1e-3
             
-            loss = a1 * loss + a2* loss_weighted + a3 * loss_L1 
+            # loss = a1 * loss + a2* loss_weighted + a3 * loss_L1 
         # the L1 loss is more robust to outliers, so we use it after the first phase of training
         loss.backward()
         
@@ -404,7 +408,7 @@ patience = 5000
 device = "cpu"  # or "cuda" if you have a GPU
 lr_reduction_factor = 0.5
 
-out_dir = Path(__file__).parent.parent / "RESULTS" / "Adam_Opt" / "noisy_runs" / "composite_loss"
+out_dir = Path(__file__).parent.parent / "RESULTS" / "Adam_Opt" / "noisy_runs" / "weightedloss"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 

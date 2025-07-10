@@ -2,6 +2,9 @@ from .io import TransientData, Measurement
 import numpy as np
 from typing import List
 import matplotlib.pyplot as plt
+from pathlib import Path
+from .io_model import TrainingRun
+
 
 def add_noise_to_TransientData(
     tr: TransientData,
@@ -87,44 +90,22 @@ def add_noise_to_Measurement(
     return Measurement(noisy_tr)
 
 
-def inspect_repeated_lossy_data(
-    lossy_meas: List[Measurement],
-    label: str,
-    reference: Measurement,
-    slice_index: slice,
-    ax=None,
-    figsize=(12, 10),
-    markersize=2,
-    color="blue",
-    plot_ideal: bool = True,
-) -> List[plt.Axes]:
+def get_repeated_noisy_runs(run_dir: Path):
     """
-    Inspect the repeated lossy data by plotting the measurements.
+    Function to get repeated noisy runs from a specified directory.
+    This function is not used in the current script but can be useful for future modifications.
     """
-    if plot_ideal:
-        ax = reference.plot_data(
-            label="ideal",
-            sharex=True,
-            ax=ax,
-            slice_index=slice_index,
-            legend=True,
-            figsize=figsize,
-            color="black",
-            ignore_dt=True,
-        )
+    csv_files = list(run_dir.glob("*.csv"))
+    runs = {}
+    for csv_file in csv_files:
+        print(f"Processing {csv_file.name}")
+        noise_level = float(csv_file.stem.split("_")[-2])  # Extract noise level from filename
+        if noise_level not in runs:
+            tr = TrainingRun.from_csv(csv_file)
+            runs[noise_level] = [tr.drop_columns(["learning_rate"])]
 
-    lossy_label = label
-    for idx, meas in enumerate(lossy_meas):
-        meas.plot_data(
-            label=lossy_label,
-            ax=ax,
-            slice_index=slice_index,
-            legend=True,
-            markers=".",
-            linestyle=" ",
-            ignore_dt=True,
-            markersize=markersize,
-            color=color,
-        )
-        lossy_label = None
-    return ax
+        else:
+            tr = TrainingRun.from_csv(csv_file)
+            runs[noise_level].append(tr.drop_columns(["learning_rate"]))
+    return runs
+

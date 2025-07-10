@@ -13,10 +13,11 @@ import numpy as np
 # add the root directory of the project to the path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from pinn_buck.config import NOMINAL as NOMINAL_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
+from pinn_buck.config import TRUE as TRUE_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
 from pinn_buck.config import _SCALE
 
-from pinn_buck.noise import add_noise_to_Measurement, inspect_repeated_lossy_data
+from pinn_buck.noise import add_noise_to_Measurement
+from pinn_buck.plot_utils_noisy import inspect_repeated_lossy_data
 
 from pinn_buck.io import LoaderH5, Measurement
 

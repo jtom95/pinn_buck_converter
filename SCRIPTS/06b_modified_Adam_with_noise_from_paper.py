@@ -16,7 +16,7 @@ import torch.nn as nn
 sys.path.append(str(Path(__file__).parent.parent))
 
 from pinn_buck.config import Parameters, TrainingRun
-from pinn_buck.config import NOMINAL as NOMINAL_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
+from pinn_buck.config import TRUE as TRUE_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
 from pinn_buck.config import _SCALE
 
 
@@ -377,6 +377,6 @@ for idx, (group_number, group_name) in enumerate(GROUP_NUMBER_DICT.items()):
 # est = model.get_estimates()
 # def rel_err(est, ref): return abs(est / ref - 1) * 100
 # for name in Parameters._fields:
-#     val, nom = getattr(est, name), getattr(parameters_nominal, name)
+#     val, nom = getattr(est, name), getattr(parameters_TRUE, name)
 #     print(f"{name:>7s}: {val:.3e}  (error = {rel_err(val, nom):.2f} %)")
 #
