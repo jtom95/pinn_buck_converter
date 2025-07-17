@@ -12,6 +12,8 @@ def l2_loss(preds: torch.Tensor, y_n: torch.Tensor, y_np1: torch.Tensor) -> torc
         + (i_np1 - i1).pow(2).sum()
         + (v_np1 - v1).pow(2).sum()
     )
+    
+
 
 
 def l1_loss(preds: torch.Tensor, y_n: torch.Tensor, y_np1: torch.Tensor) -> torch.Tensor:

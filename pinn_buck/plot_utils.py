@@ -15,6 +15,7 @@ def plot_tracked_parameters(
     label: str = None,
     color: str = "black",
     ax: Iterable[plt.Axes] = None,
+    **kwargs
 ):
     """
     Plot tracked physical parameters and optionally loss over iterations.
@@ -47,9 +48,9 @@ def plot_tracked_parameters(
 
     for i, param in enumerate(params):
         if param == "loss": 
-            axes[i].plot(df[param], color=color, label=label)
+            axes[i].plot(df[param], color=color, label=label, **kwargs)
         else: 
-            axes[i].plot(df[param], color=color, label=label if label else "estimate")
+            axes[i].plot(df[param], color=color, label=label if label else "estimate", **kwargs)
             if target and hasattr(target, param):
                 ref_val = getattr(target, param)
                 axes[i].axhline(ref_val, color="red", linestyle="--", linewidth=1, label="target")

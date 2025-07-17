@@ -121,15 +121,15 @@ def train_from_measurement_file(
         param_history=history_params,
     )
 
-    # generate the output directory if it doesn't exist
-    db_dir.mkdir(parents=True, exist_ok=True)
+    # # generate the output directory if it doesn't exist
+    # db_dir.mkdir(parents=True, exist_ok=True)
 
-    # if savename doesn't end with .csv, add it
-    if not savename.endswith(".csv"):
-        savename += ".csv"
+    # # if savename doesn't end with .csv, add it
+    # if not savename.endswith(".csv"):
+    #     savename += ".csv"
 
-    training_run.save_to_csv(db_dir / savename)
-    print("Concluded ADAM training.")
+    # training_run.save_to_csv(db_dir / savename)
+    # print("Concluded ADAM training.")
 
 # Main script
 set_seed(123)
