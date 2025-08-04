@@ -150,23 +150,23 @@ class Measurement:
         else:
             self.transients[2] = transient
 
-    @property
-    def data(self) -> Tuple[np.ndarray, np.ndarray]:
-        X_parts, y_parts = [], []
-        for tr in self.transients:
-            i, v, d, dt = (
-                tr.i,
-                tr.v,
-                tr.D,
-                tr.dt,
-            )
-            x = np.hstack([i[:-1, None], v[:-1, None], d[:-1, None], dt[:-1, None]])
-            y = np.hstack([i[1:, None], v[1:, None]])
-            X_parts.append(x)
-            y_parts.append(y)
-        X = np.vstack(X_parts).astype(np.float32)
-        y = np.vstack(y_parts).astype(np.float32)
-        return X, y
+    # @property
+    # def data(self) -> Tuple[np.ndarray, np.ndarray]:
+    #     X_parts, y_parts = [], []
+    #     for tr in self.transients:
+    #         i, v, d, dt = (
+    #             tr.i,
+    #             tr.v,
+    #             tr.D,
+    #             tr.dt,
+    #         )
+    #         x = np.hstack([i[:-1, None], v[:-1, None], d[:-1, None], dt[:-1, None]])
+    #         y = np.hstack([i[1:, None], v[1:, None]])
+    #         X_parts.append(x)
+    #         y_parts.append(y)
+    #     X = np.vstack(X_parts).astype(np.float32)
+    #     y = np.vstack(y_parts).astype(np.float32)
+    #     return X, y
 
 
     @property
@@ -184,8 +184,21 @@ class Measurement:
             X_parts.append(x)
             y_parts.append(y)
         return np.stack(X_parts, axis=1).astype(np.float32), np.stack(y_parts, axis=1).astype(np.float32)
-
-
+    
+    @property
+    def data(self) -> np.ndarray:
+        parts = []
+        for tr in self.transients:
+            i, v, d, dt = (
+                tr.i,
+                tr.v,
+                tr.D,
+                tr.dt,
+            )
+            x = np.hstack([i[:, None], v[:, None], d[:, None], dt[:, None]])
+            parts.append(x)
+        return np.stack(parts, axis=1).astype(np.float64)
+    
     @property
     def transient_idx(self) -> np.ndarray:
         """Return the transient index for each row in the data."""
