@@ -4,18 +4,29 @@ import numpy as np
 from pathlib import Path
 
 
+# class Parameters(NamedTuple):
+#     L: float
+#     RL: float
+#     C: float
+#     RC: float
+#     Rdson: float
+#     Rload1: float
+#     Rload2: float
+#     Rload3: float
+#     Vin: float
+#     VF: float
+
+
 class Parameters(NamedTuple):
     L: float
     RL: float
     C: float
     RC: float
     Rdson: float
-    Rload1: float
-    Rload2: float
-    Rload3: float
+    Rloads: List[float] 
     Vin: float
     VF: float
-
+    
 
 # Nominal component values (physical units)
 TRUE = Parameters(
@@ -24,9 +35,7 @@ TRUE = Parameters(
     C=1.645e-4,
     RC=0.201,
     Rdson=0.221,
-    Rload1=3.1,
-    Rload2=10.2,
-    Rload3=6.1,
+    Rloads= [3.1, 10.2, 6.1],  # Rload1, Rload2, Rload3
     Vin=48.0,
     VF=1.0,
 )
@@ -38,9 +47,7 @@ INITIAL_GUESS = Parameters(
     C=0.412e-4,
     RC=0.159,
     Rdson=0.122,
-    Rload1=1.22,
-    Rload2=1.22,
-    Rload3=1.22,
+    Rloads = [1.22, 1.22, 1.22],  # Rload1, Rload2, Rload3
     Vin=8.7,
     VF=0.1,
 )
@@ -53,9 +60,7 @@ _SCALE = {
     "C": 1e4,
     "RC": 1e1,
     "Rdson": 1e1,
-    "Rload1": 1.0,
-    "Rload2": 1.0,
-    "Rload3": 1.0,
+    "Rloads": [1., 1., 1.],
     "Vin": 1e-1,  # inverse of 1e1 used previously
     "VF": 1.0,
 }

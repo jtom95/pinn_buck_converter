@@ -167,7 +167,25 @@ class Measurement:
         X = np.vstack(X_parts).astype(np.float32)
         y = np.vstack(y_parts).astype(np.float32)
         return X, y
-    
+
+
+    @property
+    def data_stacked_transients(self) -> Tuple[np.ndarray, np.ndarray]:
+        X_parts, y_parts = [], []
+        for tr in self.transients:
+            i, v, d, dt = (
+                tr.i,
+                tr.v,
+                tr.D,
+                tr.dt,
+            )
+            x = np.hstack([i[:-1, None], v[:-1, None], d[:-1, None], dt[:-1, None]])
+            y = np.hstack([i[1:, None], v[1:, None]])
+            X_parts.append(x)
+            y_parts.append(y)
+        return np.stack(X_parts, axis=1).astype(np.float32), np.stack(y_parts, axis=1).astype(np.float32)
+
+
     @property
     def transient_idx(self) -> np.ndarray:
         """Return the transient index for each row in the data."""
@@ -255,14 +273,14 @@ class Measurement:
             if sharex:
                 axx.set_xlabel("")
         return ax
-    
+
     def save_to_numpyzip(self, filepath: Path):
         """Save measurements to a numpyz file."""
         if not filepath.parent.exists():
             raise FileNotFoundError(f"Directory {filepath.parent} does not exist.")
         data = {f"tr{ii + 1}": (tr.time, tr.v, tr.i, tr.dt, tr.D) for ii, tr in enumerate(self.transients)}
         np.savez_compressed(filepath, **data)
-        
+
     @classmethod
     def load_from_numpyzip(cls, filepath: Path) -> "Measurement":
         """Load measurements from a numpyz file."""
@@ -274,7 +292,7 @@ class Measurement:
                 time, v, i, dt, D = data[key]
                 transients.append(TransientData(time=time, v=v, i=i, dt=dt, D=D))
         return cls(transients)
-        
+
 
 class LoaderH5:
     def __init__(self, db_dir: Path, h5filename: str):

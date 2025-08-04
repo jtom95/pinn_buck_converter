@@ -20,9 +20,7 @@ class TrainingRun:
             C=best_params["C"],
             RC=best_params["RC"],
             Rdson=best_params["Rdson"],
-            Rload1=best_params["Rload1"],
-            Rload2=best_params["Rload2"],
-            Rload3=best_params["Rload3"],
+            Rloads = best_params["Rloads"],
             Vin=best_params["Vin"],
             VF=best_params["VF"],
         )

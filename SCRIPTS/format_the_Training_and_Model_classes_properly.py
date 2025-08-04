@@ -40,9 +40,7 @@ NOMINAL = Parameters(
     C=1.5e-4,
     RC=0.25,
     Rdson=0.25,
-    Rload1=3.3,
-    Rload2=10.0,
-    Rload3=6.8,
+    Rloads= [3.3, 10.0, 6.8],  # Rload1, Rload2, Rload3
     Vin=46.0,
     VF=1.1,
 )
@@ -53,9 +51,7 @@ REL_TOL = Parameters(
     C=0.50,
     RC=0.50,
     Rdson=0.5,
-    Rload1=0.3,
-    Rload2=0.3,
-    Rload3=0.3,
+    Rloads= [0.3, 0.3, 0.3],  # Rload1, Rload2, Rload3
     Vin=0.3,
     VF=0.3,
 )
@@ -103,9 +99,9 @@ def rel_tolerance_to_sigma(rel_tol: Parameters) -> Parameters:
         C=_to_sigma(rel_tol.C),
         RC=_to_sigma(rel_tol.RC),
         Rdson=_to_sigma(rel_tol.Rdson),
-        Rload1=_to_sigma(rel_tol.Rload1),
-        Rload2=_to_sigma(rel_tol.Rload2),
-        Rload3=_to_sigma(rel_tol.Rload3),
+        Rloads = [
+            _to_sigma(rload) for rload in rel_tol.Rloads
+        ],  # Rload1, Rload2, Rload3
         Vin=_to_sigma(rel_tol.Vin),
         VF=_to_sigma(rel_tol.VF),
     )
@@ -118,10 +114,18 @@ def log_normal_prior(logparams: Parameters, nominal: Parameters, sigma: Paramete
     total = 0.0
     nominal_logparams = make_log_param(nominal)
     for name in Parameters._fields:
-        proposed_value = getattr(logparams, name)
-        mu = getattr(nominal_logparams, name)
-        sig = getattr(sigma, name)
-        total += ((proposed_value - mu) / sig) ** 2 / 2
+        if name == "Rloads":
+            # we have two lists of Rloads, so we need to iterate over them
+            for i, rload in enumerate(logparams.Rloads):
+                proposed_value = rload
+                mu = nominal_logparams.Rloads[i]
+                sig = sigma.Rloads[i]
+                total += ((proposed_value - mu) / sig) ** 2 / 2
+        else:
+            proposed_value = getattr(logparams, name)
+            mu = getattr(nominal_logparams, name)
+            sig = getattr(sigma, name)
+            total += ((proposed_value - mu) / sig) ** 2 / 2
     return total
 
 
@@ -247,6 +251,11 @@ def fw_bw_loss_whitened(
     """
     residual_np1 = pred_np1 - observations_np1  # shape (batch_size, 2)
     residual_n = pred_n - observations_n  # shape (batch_size, 2)
+    
+    # flatten the first two dimensions to get a 2D tensor
+    residual_np1 = residual_np1.view(-1, 2)  # (B, 2)
+    residual_n = residual_n.view(-1, 2)  # (B, 2)
+    
     r = torch.cat((residual_np1, residual_n), dim=1)  # (B, 4)
     z = torch.linalg.solve_triangular(L, r.T, upper=False).T  # shape [N, 4]
     ## IMPORTANT NOTE:
@@ -265,8 +274,8 @@ def make_map_loss(
     def _loss(logparams: Parameters, preds, targets):
         i_np, v_np, i_np1, v_np1 = preds
         y_n, y_np1 = targets
-        pred_n = torch.cat((i_np, v_np), dim=1)
-        pred_np1 = torch.cat((i_np1, v_np1), dim=1)
+        pred_n = torch.stack((i_np, v_np), dim=-1)
+        pred_np1 = torch.stack((i_np1, v_np1), dim=-1)
         ll = fw_bw_loss_whitened(pred_n=pred_n, pred_np1=pred_np1, observations_n=y_n, observations_np1=y_np1, L=L)
         prior = log_normal_prior(logparams, nominal, sigma0)
         map_loss = ll + prior
@@ -368,16 +377,16 @@ class BuckParamEstimator__(nn.Module):
         self.initialize_log_parameters(param_init)
 
     def initialize_log_parameters(self, param_init: Parameters):
-        # Trainable log‑parameters
         log_params = make_log_param(param_init)
+        
         self.log_L = nn.Parameter(log_params.L, requires_grad=True)
         self.log_RL = nn.Parameter(log_params.RL, requires_grad=True)
         self.log_C = nn.Parameter(log_params.C, requires_grad=True)
         self.log_RC = nn.Parameter(log_params.RC, requires_grad=True)
         self.log_Rdson = nn.Parameter(log_params.Rdson, requires_grad=True)
-        self.log_Rload1 = nn.Parameter(log_params.Rload1, requires_grad=True)
-        self.log_Rload2 = nn.Parameter(log_params.Rload2, requires_grad=True)
-        self.log_Rload3 = nn.Parameter(log_params.Rload3, requires_grad=True)
+        self.log_Rloads = nn.ParameterList(
+            [nn.Parameter(r, requires_grad=True) for r in log_params.Rloads]
+        )
         self.log_Vin = nn.Parameter(log_params.Vin, requires_grad=True)
         self.log_VF = nn.Parameter(log_params.VF, requires_grad=True)
 
@@ -397,9 +406,7 @@ class BuckParamEstimator__(nn.Module):
             C=self.log_C,
             RC=self.log_RC,
             Rdson=self.log_Rdson,
-            Rload1=self.log_Rload1,
-            Rload2=self.log_Rload2,
-            Rload3=self.log_Rload3,
+            Rloads = [rload for rload in self.log_Rloads],
             Vin=self.log_Vin,
             VF=self.log_VF,
         )
@@ -413,9 +420,7 @@ class BuckParamEstimator__(nn.Module):
             C=params.C.item(),
             RC=params.RC.item(),
             Rdson=params.Rdson.item(),
-            Rload1=params.Rload1.item(),
-            Rload2=params.Rload2.item(),
-            Rload3=params.Rload3.item(),
+            Rloads = [rload.item() for rload in params.Rloads],
             Vin=params.Vin.item(),
             VF=params.VF.item(),
         )
@@ -431,9 +436,16 @@ class BuckParamEstimator__(nn.Module):
 
     # ------------------------------- forward --------------------------
     @staticmethod
-    def _rk4_step(i, v, D, dt, p: Parameters, rload, sign=+1):
-
+    def _rk4_step(i, v, D, dt, p: Parameters, sign=+1):
+        """
+        Vectorized RK4 step for shape [..., 1].
+        i, v, D, dt have shape [batch, n_transients, 1]
+        p.Rloads is a list [Rload_0, Rload_1, ..., Rload_T-1]
+        """
         dh = dt * sign
+
+        # Build rload tensor of shape [1, 1] for broadcasting
+        rload = torch.stack(p.Rloads).view(1, -1)
 
         def f(i_, v_):
             di = -((D * p.Rdson + p.RL) * i_ + v_ - D * p.Vin + (1 - D) * p.VF) / p.L
@@ -471,7 +483,18 @@ class BuckParamEstimator__(nn.Module):
             parts.append(torch.ones((k3, 1), device=device) * p.Rload3)
         return torch.cat(parts, 0)
         
-        
+    
+    def _rload_from_idx(self, run_idx: torch.LongTensor):
+        """
+        run_idx: [batch_size, n_transients]
+        Each index points to which Rload to pick for each transient.
+        Returns shape [batch_size, n_transients, 1]
+        """
+        p = self._physical()
+        lookup = torch.stack([p.Rload1, p.Rload2, p.Rload3])  # shape [3]
+        rload = lookup[run_idx]  # [batch_size, n_transients]
+        return rload.unsqueeze(-1)
+    
     def _rload_from_idx(self, run_idx: torch.LongTensor):
         """Rows may be arbitrarily shuffled; use run_idx to look up Rload."""
         p = self._physical()
@@ -484,20 +507,22 @@ class BuckParamEstimator__(nn.Module):
 class BuckParamEstimator(BuckParamEstimator__):
     """Physics‑informed NN for parameter estimation in a buck converter."""
 
-    def forward(self, X: torch.Tensor, y: torch.Tensor, run_idx: torch.LongTensor):
-        i_n, v_n = X[:, 0:1], X[:, 1:2]
-        S, dt = X[:, 2:3], X[:, 3:4]
+    def forward(self, X: torch.Tensor, y: torch.Tensor):
+        """
+        X: [batch, n_transients, 4] -> (i_n, v_n, D, dt)
+        y: [batch, n_transients, 2] -> (i_np1, v_np1)
+        """
+        i_n, v_n = X[..., 0], X[..., 1]
+        D, dt = X[..., 2], X[..., 3]
 
-        i_np1, v_np1 = y[:, 0:1], y[:, 1:2]
+        i_np1, v_np1 = y[..., 0], y[..., 1]
 
         p = self._physical()
-        rload = self._rload_from_idx(run_idx)
-        
-        # forward prediction using RK4
-        i_np1_pred, v_np1_pred = self._rk4_step(i_n, v_n, S, dt, p, rload, sign=+1)
 
-        # backward prediction using RK4
-        i_n_pred, v_n_pred = self._rk4_step(i_np1, v_np1, S, dt, p, rload, sign=-1)
+        # Forward and backward predictions (vectorized)
+        i_np1_pred, v_np1_pred = self._rk4_step(i_n, v_n, D, dt, p, sign=+1)
+        i_n_pred, v_n_pred = self._rk4_step(i_np1, v_np1, D, dt, p, sign=-1)
+
         return i_n_pred, v_n_pred, i_np1_pred, v_np1_pred
 
 
@@ -517,10 +542,10 @@ class Trainer:
         self.device = device
         self.history = {"loss": [], "params": [], "lr": []}
 
-    def fit(self, X, y, run_idx: torch.LongTensor, normalize_input: bool = True):
+    def fit(self, X, y, normalize_input: bool = True):
         X = X.detach().to(self.device)
         y = y.detach().to(self.device)
-        y_prev = X[:, :2].clone().detach().to(self.device)
+        y_prev = X[..., :2].clone().detach().to(self.device)
 
         X = X.to(self.device)
         y = y.to(self.device)
@@ -549,7 +574,7 @@ class Trainer:
 
         for it in range(1, self.optim_cfg.epochs + 1):
             opt.zero_grad()
-            preds = normalizer.normalize_model_predictions(self.model(X, y, run_idx)) if normalize_input else self.model(X, y, run_idx)
+            preds = normalizer.normalize_model_predictions(self.model(X, y)) if normalize_input else self.model(X, y)
 
             loss: torch.Tensor = self.loss_fn(self.model.logparams, preds, (y_prev_norm, y_norm))
             loss.backward()
@@ -566,27 +591,33 @@ class Trainer:
                 if loss.item() < best_loss:
                     best_loss = loss.item()
 
-                # print the parameter estimation
+                # Collect gradients for scalar parameters
+                scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
                 grads = [
-                    getattr(self.model, f"log_{n}").grad.view(1)
-                    for n in Parameters._fields
-                    if getattr(self.model, f"log_{n}").grad is not None
+                    getattr(self.model, f"log_{name}").grad.view(1)
+                    for name in scalar_param_names
+                    if getattr(self.model, f"log_{name}").grad is not None
                 ]
 
+                # Add gradients for Rloads
+                for rload_param in self.model.log_Rloads:
+                    if rload_param.grad is not None:
+                        grads.append(rload_param.grad.view(1))
+
+                # Compute gradient norm
                 if grads:
                     gradient_vector = torch.cat(grads)
                     gradient_norm = gradient_vector.norm().item()
                 else:
-                    gradient_norm = float(
-                        "nan"
-                    )  # no gradients found (shouldn't happen during training)
+                    gradient_norm = float("nan")  # no gradients found (shouldn't happen during training)
 
+                # Print parameter estimates
                 print(
-                    f"[Adam] Iteration {it}, gradient_norm {gradient_norm:4e}, loss {loss:4e},  Parameters:",
-                    f"L={est.L:.3e}, RL={est.RL:.3e}, C={est.C:.3e}, "
-                    f"RC={est.RC:.3e}, Rdson={est.Rdson:.3e}, "
-                    f"Rload1={est.Rload1:.3e}, Rload2={est.Rload2:.3e}, "
-                    f"Rload3={est.Rload3:.3e}, Vin={est.Vin:.3f}, VF={est.VF:.3e}",
+                    f"[Adam] Iteration {it}, gradient_norm {gradient_norm:4e}, loss {loss:4e}, Parameters:",
+                    f"L={est.L:.3e}, RL={est.RL:.3e}, C={est.C:.3e}, ",
+                    f"RC={est.RC:.3e}, Rdson={est.Rdson:.3e}, ",
+                    f"Rloads=[{', '.join(f'{r:.3e}' for r in est.Rloads)}], ",
+                    f"Vin={est.Vin:.3f}, VF={est.VF:.3e}",
                 )
 
             if it % self.optim_cfg.save_every_adam == 0:
@@ -615,7 +646,7 @@ class Trainer:
         def closure():
             lbfgs_optim.zero_grad()
 
-            pred = self.model(X, y, run_idx)
+            pred = self.model(X, y)
             pred_norm = normalizer.normalize_model_predictions(pred) if normalize_input else pred
             loss_val = self.lbfgs_loss_fn(
                 self.model.logparams, pred_norm, (y_prev_norm, y_norm)
@@ -656,27 +687,33 @@ class Trainer:
                 if loss.item() < best_loss:
                     best_loss = loss.item()
 
-                # print the parameter estimation
+                # Collect gradients for scalar parameters
+                scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
                 grads = [
-                    getattr(self.model, f"log_{n}").grad.view(1)
-                    for n in Parameters._fields
-                    if getattr(self.model, f"log_{n}").grad is not None
+                    getattr(self.model, f"log_{name}").grad.view(1)
+                    for name in scalar_param_names
+                    if getattr(self.model, f"log_{name}").grad is not None
                 ]
 
+                # Add gradients for Rloads
+                for rload_param in self.model.log_Rloads:
+                    if rload_param.grad is not None:
+                        grads.append(rload_param.grad.view(1))
+
+                # Compute gradient norm
                 if grads:
                     gradient_vector = torch.cat(grads)
                     gradient_norm = gradient_vector.norm().item()
                 else:
-                    gradient_norm = float(
-                        "nan"
-                    )  # no gradients found (shouldn't happen during training)
+                    gradient_norm = float("nan")  # no gradients found (shouldn't happen during training)
+
 
                 print(
                     f"[LBFGS] Iteration {self.optim_cfg.epochs + it}, gradient_norm {gradient_norm:4e}, loss {loss:4e},  Parameters:",
                     f"L={est.L:.3e}, RL={est.RL:.3e}, C={est.C:.3e}, "
                     f"RC={est.RC:.3e}, Rdson={est.Rdson:.3e}, "
-                    f"Rload1={est.Rload1:.3e}, Rload2={est.Rload2:.3e}, "
-                    f"Rload3={est.Rload3:.3e}, Vin={est.Vin:.3f}, VF={est.VF:.3e}",
+                    f"Rloads=[{', '.join(f'{r:.3e}' for r in est.Rloads)}], "
+                    f"Vin={est.Vin:.3f}, VF={est.VF:.3e}",
                 )
 
             if it % self.optim_cfg.save_every_lbfgs == 0:
@@ -708,11 +745,6 @@ class Trainer:
         print(f"Best loss: {best_loss:.4e}")
         best_params = training_run.best_parameters
         opt_model = BuckParamEstimator(
-            lower_bound = self.model.lb,
-            upper_bound = self.model.ub,
-            split1= self.model.s1,
-            split2= self.model.s2,
-            split3= self.model.s3,
             param_init = best_params,
         )
 
@@ -851,6 +883,10 @@ def blockwise_loss(
 ):
     residual_np1 = pred_np1 - observations_np1  # shape (batch_size, 2)
     residual_n = pred_n - observations_n  # shape (batch_size, 2)
+    
+    # flatten the first two dimensions to get a 2D tensor
+    residual_np1 = residual_np1.view(-1, 2)  # (B*T, 2)
+    residual_n = residual_n.view(-1, 2)  # (B*T, 2)
 
     Sig_fwfw = Sigma[:2, :2]
     Sig_bwbw = Sigma[2:, 2:]
@@ -877,8 +913,8 @@ def make_map_loss_blockwise(
     def _loss(logparams: Parameters, preds, targets):
         i_np, v_np, i_np1, v_np1 = preds
         y_n, y_np1 = targets
-        pred_n = torch.cat((i_np, v_np), dim=1)
-        pred_np1 = torch.cat((i_np1, v_np1), dim=1)
+        pred_n = torch.stack((i_np, v_np), dim=-1)
+        pred_np1 = torch.stack((i_np1, v_np1), dim=-1)
         ll = blockwise_loss(
             pred_np1=pred_np1,
             pred_n=pred_n,
@@ -921,22 +957,16 @@ run_configs = AdamOptTrainingConfigs(
 
 
 # load the transient data as unified numpy arrays
-def load_data_to_model(meas: Measurement, initial_guess_params: Parameters):
+def load_data_to_model(meas: Measurement):
     """Load the data from a Measurement object and return the model."""
     # load the transient data as unified numpy arrays
-    X, y = meas.data
-    run_idx = torch.as_tensor(meas.transient_idx, dtype=torch.long, device=device)
-    s1, s2, s3 = list(
-        map(lambda x: x - 1, meas.transient_lengths)
-    )  # subtract 1 since we use the previous time step as input
-    lb, ub = X.min(0), X.max(0)
+    X, y = meas.data_stacked_transients
 
     X_t = torch.tensor(X, device=device)
     y_t = torch.tensor(y, device=device)
 
     # Model
-    model = BuckParamEstimator(initial_guess_params).to(device)
-    return X_t, y_t, model, run_idx
+    return X_t, y_t
 
 
 GROUP_NUMBER_DICT = {
@@ -992,10 +1022,11 @@ for idx, group_number in enumerate(l_dict.keys()):
     print(f"{idx}) Training with {group_name} data")
 
     # Train the model on the noisy measurement
-    X, y, model, run_idx = load_data_to_model(
+    X, y = load_data_to_model(
         meas=io.M,
-        initial_guess_params=NOMINAL,
     )
+    model = BuckParamEstimator(param_init = NOMINAL).to(device)
+
 
     prior_info = {
         "nominal": NOMINAL,
@@ -1031,7 +1062,6 @@ for idx, group_number in enumerate(l_dict.keys()):
     opt_model = trainer.fit(
         X=X,
         y=y,
-        run_idx=run_idx,
         normalize_input=False
     )
     inverse = True  # inverse is False only for the ideal case, so we set it to True for the rest of the groups

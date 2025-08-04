@@ -14,9 +14,9 @@ def make_log_param(params: Parameters) -> Parameters:
         C=_to_log(params.C*_SCALE["C"]),
         RC=_to_log(params.RC*_SCALE["RC"]),
         Rdson=_to_log(params.Rdson*_SCALE["Rdson"]),
-        Rload1=_to_log(params.Rload1*_SCALE["Rload1"]),
-        Rload2=_to_log(params.Rload2*_SCALE["Rload2"]),
-        Rload3=_to_log(params.Rload3*_SCALE["Rload3"]),
+        Rloads= [
+            _to_log(rload * scale) for rload, scale in zip(params.Rloads, _SCALE["Rloads"])
+        ],
         Vin=_to_log(params.Vin*_SCALE["Vin"]),
         VF=_to_log(params.VF*_SCALE["VF"])
     )
@@ -30,9 +30,10 @@ def reverse_log_param(log_param: Parameters) -> float:
         C=torch.exp(torch.as_tensor(log_param.C, dtype=torch.float32)) / _SCALE["C"],
         RC=torch.exp(torch.as_tensor(log_param.RC, dtype=torch.float32)) / _SCALE["RC"],
         Rdson=torch.exp(torch.as_tensor(log_param.Rdson, dtype=torch.float32)) / _SCALE["Rdson"],
-        Rload1=torch.exp(torch.as_tensor(log_param.Rload1, dtype=torch.float32)) / _SCALE["Rload1"],
-        Rload2=torch.exp(torch.as_tensor(log_param.Rload2, dtype=torch.float32)) / _SCALE["Rload2"],
-        Rload3=torch.exp(torch.as_tensor(log_param.Rload3, dtype=torch.float32)) / _SCALE["Rload3"],
+        Rloads=[
+            torch.exp(torch.as_tensor(rload, dtype=torch.float32)) / scale
+            for rload, scale in zip(log_param.Rloads, _SCALE["Rloads"])
+        ],
         Vin=torch.exp(torch.as_tensor(log_param.Vin, dtype=torch.float32)) / _SCALE["Vin"],
         VF=torch.exp(torch.as_tensor(log_param.VF, dtype=torch.float32)) / _SCALE["VF"],
     )
