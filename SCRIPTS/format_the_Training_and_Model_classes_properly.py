@@ -362,17 +362,9 @@ class BuckParamEstimator__(nn.Module):
 
     def __init__(
         self,
-        lower_bound: np.ndarray,
-        upper_bound: np.ndarray,
-        split1: int,
-        split2: int,
-        split3: int,
         param_init: Parameters,
     ) -> None:
         super().__init__()
-        self.lb = torch.as_tensor(lower_bound, dtype=torch.float32)
-        self.ub = torch.as_tensor(upper_bound, dtype=torch.float32)
-        self.s1, self.s2, self.s3 = split1, split2, split3
         self.initialize_log_parameters(param_init)
 
     def initialize_log_parameters(self, param_init: Parameters):
@@ -491,29 +483,6 @@ class BuckParamEstimator__(nn.Module):
 
 class BuckParamEstimator(BuckParamEstimator__):
     """Physics‑informed NN for parameter estimation in a buck converter."""
-
-    def _make_rload_vector(self, N: int, device: torch.device, p: Parameters):
-        """
-        Return an (N,1) tensor with [Rload1]*k1 + [Rload2]*k2 + [Rload3]*k3
-        where:
-            k1 = min(N,  s1)
-            k2 = min(max(N - s1, 0), s2)
-            k3 = max(N - s1 - s2, 0)   (clipped to ≤ s3 but N never exceeds s1+s2+s3)
-        """
-        # how many rows belong to each load in THIS batch
-        k1 = min(N, self.s1)
-        k2 = min(max(N - self.s1, 0), self.s2)
-        k3 = max(N - self.s1 - self.s2, 0)
-
-        parts = []
-        if k1:
-            parts.append(torch.ones((k1, 1), device=device) * p.Rload1)
-        if k2:
-            parts.append(torch.ones((k2, 1), device=device) * p.Rload2)
-        if k3:
-            parts.append(torch.ones((k3, 1), device=device) * p.Rload3)
-
-        return torch.cat(parts, dim=0)  # (N,1)
 
     def forward(self, X: torch.Tensor, y: torch.Tensor, run_idx: torch.LongTensor):
         i_n, v_n = X[:, 0:1], X[:, 1:2]
@@ -966,7 +935,7 @@ def load_data_to_model(meas: Measurement, initial_guess_params: Parameters):
     y_t = torch.tensor(y, device=device)
 
     # Model
-    model = BuckParamEstimator(lb, ub, s1, s2, s3, initial_guess_params).to(device)
+    model = BuckParamEstimator(initial_guess_params).to(device)
     return X_t, y_t, model, run_idx
 
 
