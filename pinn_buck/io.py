@@ -167,6 +167,15 @@ class Measurement:
         X = np.vstack(X_parts).astype(np.float32)
         y = np.vstack(y_parts).astype(np.float32)
         return X, y
+    
+    @property
+    def transient_idx(self) -> np.ndarray:
+        """Return the transient index for each row in the data."""
+        idx_parts = []
+        for ii, tr in enumerate(self.transients):
+            n = len(tr.i) - 1  # exclude the last point since it has no next value
+            idx_parts.append(np.full((n, 1), ii, dtype=np.int64))
+        return np.vstack(idx_parts) if idx_parts else np.empty((0, 1), dtype=np.int64)
 
     def plot_data(
         self,
