@@ -24,59 +24,52 @@ import torch
 from torch import nn
 
 
-def measurement_to_tensors(meas: Measurement, device=None) -> Tuple[torch.Tensor, torch.LongTensor]:
+from abc import ABC, abstractmethod
+from typing import Tuple, List, Optional, Any, Literal
+
+
+class BaseBuckEstimator(nn.Module, ABC):
     """
-    Convert a Measurement into
-        X        : (N, 4) float32 tensor  [i, v, D, dt]
-        run_idx  : (N,)  int64   tensor  each row ∈ {0,1,2}
+    Base class for any buck-converter estimator.
+
+    forward(X, **kw)
+        X        : (B, T, 4) tensor of inputs
+        kw       : additional keyword arguments for the forward pass
+        returns  : (B, T, p) tensor of outputs, where p is the number of outputs (e.g., 2 for i and v or 4 if we have both forward and backward predictions)
+
+    where B is the batch size and T is the number of different transients. This is a simple and intuitive way to organize and represent the different transients in the data. However the
+    limitation is that the model can only handle transients of the same length.
+
+    the dimension of 4 corresponds to (i, v, D, dt).
     """
-    X_parts, run_parts = [], []
-    for k, tr in enumerate(meas.transients):
-        i, v, D, dt = tr.i, tr.v, tr.D, tr.dt
-        X_parts.append(np.hstack([i[:-1, None], v[:-1, None], D[:-1, None], dt[:-1, None]]))
-        run_parts.append(np.full(len(i) - 1, k, dtype=np.int64))
-
-    X_np = np.vstack(X_parts).astype(np.float32)
-    run_idx_np = np.concatenate(run_parts)
-
-    device = torch.device(device or "cpu") 
-    return (
-        torch.as_tensor(X_np, device=device, dtype=torch.float32),
-        torch.as_tensor(run_idx_np, device=device, dtype=torch.long),  # explicit dtype
-    )
-
-
-class BuckParamEstimator__(nn.Module):
-    """Physics‑informed NN for parameter estimation in a buck converter."""
 
     def __init__(
         self,
-        lower_bound: np.ndarray,
-        upper_bound: np.ndarray,
-        split1: int,
-        split2: int,
-        split3: int,
         param_init: Parameters,
     ) -> None:
         super().__init__()
-        self.lb = torch.as_tensor(lower_bound, dtype=torch.float32)
-        self.ub = torch.as_tensor(upper_bound, dtype=torch.float32)
-        self.s1, self.s2, self.s3 = split1, split2, split3
+        self._initialize_log_parameters(param_init)
 
-        # Trainable log‑parameters
+    def _initialize_log_parameters(self, param_init: Parameters):
         log_params = make_log_param(param_init)
+
         self.log_L = nn.Parameter(log_params.L, requires_grad=True)
         self.log_RL = nn.Parameter(log_params.RL, requires_grad=True)
         self.log_C = nn.Parameter(log_params.C, requires_grad=True)
         self.log_RC = nn.Parameter(log_params.RC, requires_grad=True)
         self.log_Rdson = nn.Parameter(log_params.Rdson, requires_grad=True)
-        self.log_Rload1 = nn.Parameter(log_params.Rload1, requires_grad=True)
-        self.log_Rload2 = nn.Parameter(log_params.Rload2, requires_grad=True)
-        self.log_Rload3 = nn.Parameter(log_params.Rload3, requires_grad=True)
+        self.log_Rloads = nn.ParameterList(
+            [nn.Parameter(r, requires_grad=True) for r in log_params.Rloads]
+        )
         self.log_Vin = nn.Parameter(log_params.Vin, requires_grad=True)
         self.log_VF = nn.Parameter(log_params.VF, requires_grad=True)
 
     # ----------------------------- helpers -----------------------------
+
+    def _physical(self) -> Parameters:
+        """Return current parameters in physical units (inverse scaling)."""
+        return reverse_log_param(self.logparams)
+
     @property
     def logparams(self) -> Parameters:
         """Return current log‑space parameters."""
@@ -86,19 +79,10 @@ class BuckParamEstimator__(nn.Module):
             C=self.log_C,
             RC=self.log_RC,
             Rdson=self.log_Rdson,
-            Rload1=self.log_Rload1,
-            Rload2=self.log_Rload2,
-            Rload3=self.log_Rload3,
+            Rloads=[rload for rload in self.log_Rloads],
             Vin=self.log_Vin,
             VF=self.log_VF,
         )
-
-    # def _scale(self, x: torch.Tensor):
-    #     return 2 * (x - self.lb) / (self.ub - self.lb) - 1
-
-    def _physical(self) -> Parameters:
-        """Return current parameters in physical units (inverse scaling)."""
-        return reverse_log_param(self.logparams)
 
     def get_estimates(self) -> Parameters:
         """Return current parameters in physical units."""
@@ -109,9 +93,7 @@ class BuckParamEstimator__(nn.Module):
             C=params.C.item(),
             RC=params.RC.item(),
             Rdson=params.Rdson.item(),
-            Rload1=params.Rload1.item(),
-            Rload2=params.Rload2.item(),
-            Rload3=params.Rload3.item(),
+            Rloads=[rload.item() for rload in params.Rloads],
             Vin=params.Vin.item(),
             VF=params.VF.item(),
         )
@@ -127,9 +109,32 @@ class BuckParamEstimator__(nn.Module):
 
     # ------------------------------- forward --------------------------
     @staticmethod
-    def _rk4_step(i, v, D, dt, p: Parameters, rload, sign=+1):
+    def _rk4_step(i, v, D, dt, p: Parameters, sign=+1):
+        """
+        One Runge–Kutta-4 step of the buck-converter ODE.
 
+        * `sign = +1` → forward step  (n → n+1)
+        * `sign = -1` → backward step (n+1 → n)
+
+        Vectorized for tensors shape [..., 1].
+        i, v, D, dt have shape [B, T, 1], where B is the batch size and T is the number of transients.
+        p.Rloads is a list [Rload_0, Rload_1, ..., Rload_T-1]
+
+        Parameters:
+        - i: current at time n, shape [B, T, 1]
+        - v: voltage at time n, shape [B, T, 1]
+        - D: duty cycle at time n, shape [B, T, 1]
+        - dt: time step at time n, shape [B, T, 1]
+        - p: Parameters object containing the physical parameters of the buck converter
+        - sign: +1 for forward step, -1 for backward step
+        Returns:
+        - i_new: current at time n±1, shape [B, T, 1]
+        - v_new: voltage at time n±1, shape [B, T, 1]
+        """
         dh = dt * sign
+
+        # Build rload tensor of shape [1, 1] for broadcasting
+        rload = torch.stack(p.Rloads).view(1, -1)
 
         def f(i_, v_):
             di = -((D * p.Rdson + p.RL) * i_ + v_ - D * p.Vin + (1 - D) * p.VF) / p.L
@@ -145,45 +150,46 @@ class BuckParamEstimator__(nn.Module):
         v_new = v + dh / 6.0 * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
         return i_new, v_new
 
+    @abstractmethod
+    def forward(self, X: torch.Tensor, **kwargs):
+        """
+        Parameters
+        ----------
+        X : (N, T, 4) tensor — rows xₙ = [iₙ, vₙ, Dₙ, Δtₙ].
+            Sub-classes choose how to slice/reshape X before calling `_rk4_step`.
 
-class BuckParamEstimator(BuckParamEstimator__):
+        Returns
+        -------
+        Pred : Tuple[torch.Tensor, torch.Tensor] for forward and backward predictions or torch.Tensor for a single direction prediction.
+        """
+        ...
+
+
+class BuckParamEstimator(BaseBuckEstimator):
     """Physics‑informed NN for parameter estimation in a buck converter."""
 
-    def _make_rload_vector(self, N: int, device: torch.device, p: Parameters):
+    def forward(self, X: torch.Tensor):
         """
-        Return an (N,1) tensor with [Rload1]*k1 + [Rload2]*k2 + [Rload3]*k3
-        where:
-            k1 = min(N,  s1)
-            k2 = min(max(N - s1, 0), s2)
-            k3 = max(N - s1 - s2, 0)   (clipped to ≤ s3 but N never exceeds s1+s2+s3)
+        X: [batch, n_transients, 4] -> (i_n, v_n, D, dt)
+
+        Returns:
+        -------
+        Tuple[torch.Tensor, torch.Tensor]
+        fwd_pred: Forward prediction of the buck converter state at time n+1. Shape (B, T, 2)
+        bck_pred: Backward prediction of the buck converter state at time n-1. Shape (B, T, 2)
         """
-        # how many rows belong to each load in THIS batch
-        k1 = min(N, self.s1)
-        k2 = min(max(N - self.s1, 0), self.s2)
-        k3 = max(N - self.s1 - self.s2, 0)
 
-        parts = []
-        if k1:
-            parts.append(torch.ones((k1, 1), device=device) * p.Rload1)
-        if k2:
-            parts.append(torch.ones((k2, 1), device=device) * p.Rload2)
-        if k3:
-            parts.append(torch.ones((k3, 1), device=device) * p.Rload3)
-
-        return torch.cat(parts, dim=0)  # (N,1)
-
-    def forward(self, X: torch.Tensor, y: torch.Tensor):
-        i_n, v_n = X[:, 0:1], X[:, 1:2]
-        S, dt = X[:, 2:3], X[:, 3:4]
-
-        i_np1, v_np1 = y[:, 0:1], y[:, 1:2]
+        i, v = X[..., 0], X[..., 1]
+        D, dt = X[..., 2], X[..., 3]
 
         p = self._physical()
-        rload = self._make_rload_vector(N=X.size(0), device=X.device, p=p)
 
-        # forward prediction using RK4
-        i_np1_pred, v_np1_pred = self._rk4_step(i_n, v_n, S, dt, p, rload, sign=+1)
+        # Forward and backward predictions (vectorized)
+        fwd_pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)
+        bck_pred = self._rk4_step(i[1:], v[1:], D[:-1], dt[:-1], p, sign=-1)
 
-        # backward prediction using RK4
-        i_n_pred, v_n_pred = self._rk4_step(i_np1, v_np1, S, dt, p, rload, sign=-1)
-        return i_n_pred, v_n_pred, i_np1_pred, v_np1_pred
+        # transform the tuple into a tensor by stacking on the last dimension
+        fwd_pred = torch.stack(fwd_pred, dim=-1)  # shape (B, T-1, 2)
+        bck_pred = torch.stack(bck_pred, dim=-1)  # shape (B, T-1, 2)
+
+        return fwd_pred, bck_pred

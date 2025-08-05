@@ -23,7 +23,6 @@ from pinn_buck.noise import add_noise_to_Measurement
 
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
 from pinn_buck.model.model_param_estimator import BuckParamEstimator
-from pinn_buck.model.losses import l2_loss
 from pinn_buck.io_model import TrainingRun
 
 from pinn_buck.io import LoaderH5
@@ -239,72 +238,11 @@ def chol(mat: torch.Tensor, eps=1e-9) -> torch.Tensor:
     return L  # same as L⁻ᵀ · L⁻¹
 
 
-def fw_bw_loss_whitened(
-    pred_np1: torch.Tensor,
-    pred_n: torch.Tensor,
-    observations_np1: torch.Tensor,
-    observations_n: torch.Tensor,
-    L: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Compute r^T Σ^{-1} r via Cholesky whitening: r -> z = L^{-1} r.
-    """
-    residual_np1 = pred_np1 - observations_np1  # shape (batch_size, 2)
-    residual_n = pred_n - observations_n  # shape (batch_size, 2)
-    
-    # flatten the first two dimensions to get a 2D tensor
-    residual_np1 = residual_np1.view(-1, 2)  # (B, 2)
-    residual_n = residual_n.view(-1, 2)  # (B, 2)
-    
-    r = torch.cat((residual_np1, residual_n), dim=1)  # (B, 4)
-    z = torch.linalg.solve_triangular(L, r.T, upper=False).T  # shape [N, 4]
-    ## IMPORTANT NOTE:
-    # Note that using solve_triangular is much more stable for the gradients and optimization
-    # compared to z = torch.matmul(r, L_inv.T)  # whitening: (B, 4)
-    # even if L_inv = chol_inv(L) is used, it is still more stable to use solve_triangular
-    # because it avoids the numerical issues with the inverse of the Cholesky factor.
-    return 0.5 * (z**2).sum()
-
-
-# define the loss function for MAP estimation that combines the L2 loss and the log-normal prior.
-def make_map_loss(
-    nominal: Parameters, sigma0: Parameters, L: torch.Tensor, scale_factor: float = 1.0
-) -> Callable:
-
-    def _loss(logparams: Parameters, preds, targets):
-        i_np, v_np, i_np1, v_np1 = preds
-        y_n, y_np1 = targets
-        pred_n = torch.stack((i_np, v_np), dim=-1)
-        pred_np1 = torch.stack((i_np1, v_np1), dim=-1)
-        ll = fw_bw_loss_whitened(pred_n=pred_n, pred_np1=pred_np1, observations_n=y_n, observations_np1=y_np1, L=L)
-        prior = log_normal_prior(logparams, nominal, sigma0)
-        map_loss = ll + prior
-        return map_loss * scale_factor
-        
-
-    return _loss
-
 # %%
 from dataclasses import dataclass
 
 
 # for simplicity let's define a dataclass for the training configurations
-@dataclass
-class AdamOptTrainingConfigs:
-    savename: str = "saved_run"
-    out_dir: Path = Path(".")
-    lr: float = 1e-3
-    epochs: int = 20_000
-    device: str = "cpu"
-    patience: int = 5000
-    lr_reduction_factor: float = 0.5
-    epochs_lbfgs: int = 1500
-    lr_lbfgs: float = 1e-3
-    history_size_lbfgs: int = 50
-    max_iter_lbfgs: int = 10
-    clip_gradient_adam: float = None
-    save_every_adam: int = 1000
-    save_every_lbfgs: int = 10
 
 
 class NormalizerMeanStd:
@@ -365,131 +303,37 @@ class NormalizerMeanStd:
         """Normalize the output data."""
         return (y - self.mean) / self.std
 
-
-class BuckParamEstimator__(nn.Module):
-    """Physics‑informed NN for parameter estimation in a buck converter."""
-
-    def __init__(
-        self,
-        param_init: Parameters,
-    ) -> None:
-        super().__init__()
-        self.initialize_log_parameters(param_init)
-
-    def initialize_log_parameters(self, param_init: Parameters):
-        log_params = make_log_param(param_init)
-        
-        self.log_L = nn.Parameter(log_params.L, requires_grad=True)
-        self.log_RL = nn.Parameter(log_params.RL, requires_grad=True)
-        self.log_C = nn.Parameter(log_params.C, requires_grad=True)
-        self.log_RC = nn.Parameter(log_params.RC, requires_grad=True)
-        self.log_Rdson = nn.Parameter(log_params.Rdson, requires_grad=True)
-        self.log_Rloads = nn.ParameterList(
-            [nn.Parameter(r, requires_grad=True) for r in log_params.Rloads]
-        )
-        self.log_Vin = nn.Parameter(log_params.Vin, requires_grad=True)
-        self.log_VF = nn.Parameter(log_params.VF, requires_grad=True)
-
-    # ----------------------------- helpers -----------------------------
-
-    def _physical(self) -> Parameters:
-        """Return current parameters in physical units (inverse scaling)."""
-        return reverse_log_param(self.logparams)
-    
-    
-    @property
-    def logparams(self) -> Parameters:
-        """Return current log‑space parameters."""
-        return Parameters(
-            L=self.log_L,
-            RL=self.log_RL,
-            C=self.log_C,
-            RC=self.log_RC,
-            Rdson=self.log_Rdson,
-            Rloads = [rload for rload in self.log_Rloads],
-            Vin=self.log_Vin,
-            VF=self.log_VF,
-        )
-
-    def get_estimates(self) -> Parameters:
-        """Return current parameters in physical units."""
-        params = self._physical()
-        return Parameters(
-            L=params.L.item(),
-            RL=params.RL.item(),
-            C=params.C.item(),
-            RC=params.RC.item(),
-            Rdson=params.Rdson.item(),
-            Rloads = [rload.item() for rload in params.Rloads],
-            Vin=params.Vin.item(),
-            VF=params.VF.item(),
-        )
-
-    # ---------------------- physics right‑hand sides -------------------
-    @staticmethod
-    def _di(i_k, v_k, S, p: Parameters):
-        return -((S * p.Rdson + p.RL) * i_k + v_k - S * p.Vin + (1 - S) * p.VF) / p.L
-
-    @staticmethod
-    def _dv(i_k, v_k, S, p: Parameters, rload, di):
-        return (p.C * p.RC * rload * di + rload * i_k - v_k) / (p.C * (p.RC + rload))
-
-    # ------------------------------- forward --------------------------
-    @staticmethod
-    def _rk4_step(i, v, D, dt, p: Parameters, sign=+1):
-        """
-        Vectorized RK4 step for shape [..., 1].
-        i, v, D, dt have shape [batch, n_transients, 1]
-        p.Rloads is a list [Rload_0, Rload_1, ..., Rload_T-1]
-        """
-        dh = dt * sign
-
-        # Build rload tensor of shape [1, 1] for broadcasting
-        rload = torch.stack(p.Rloads).view(1, -1)
-
-        def f(i_, v_):
-            di = -((D * p.Rdson + p.RL) * i_ + v_ - D * p.Vin + (1 - D) * p.VF) / p.L
-            dv = (p.C * p.RC * rload * di + rload * i_ - v_) / (p.C * (p.RC + rload))
-            return di, dv
-
-        k1_i, k1_v = f(i, v)
-        k2_i, k2_v = f(i + 0.5 * dh * k1_i, v + 0.5 * dh * k1_v)
-        k3_i, k3_v = f(i + 0.5 * dh * k2_i, v + 0.5 * dh * k2_v)
-        k4_i, k4_v = f(i + dh * k3_i, v + dh * k3_v)
-
-        i_new = i + dh / 6.0 * (k1_i + 2 * k2_i + 2 * k3_i + k4_i)
-        v_new = v + dh / 6.0 * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
-        return i_new, v_new
+from typing import Optional
+from pinn_buck.model.model_param_estimator import BuckParamEstimator
+from pinn_buck.model.loss_function_archive import build_map_loss, fw_bw_loss_whitened, diag_second_order_loss
+from pinn_buck.model.loss_function_configs import LikelihoodLossFunction, PriorLossFunction, MAPLossFunction
 
 
-class BuckParamEstimator(BuckParamEstimator__):
-    """Physics‑informed NN for parameter estimation in a buck converter."""
-
-    def forward(self, X: torch.Tensor):
-        """
-        X: [batch, n_transients, 4] -> (i_n, v_n, D, dt)
-        y: [batch, n_transients, 2] -> (i_np1, v_np1)
-        """
-
-        i, v = X[..., 0], X[..., 1]
-        D, dt = X[..., 2], X[..., 3]
-
-        p = self._physical()
-
-        # Forward and backward predictions (vectorized)
-        i_np1_pred, v_np1_pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)
-        i_n_pred, v_n_pred = self._rk4_step(i[1:], v[1:], D[:-1], dt[:-1], p, sign=-1)
-
-        return i_n_pred, v_n_pred, i_np1_pred, v_np1_pred
+@dataclass
+class AdamOptTrainingConfigs:
+    savename: str = "saved_run"
+    out_dir: Path = Path(".")
+    lr: float = 1e-3
+    epochs: int = 20_000
+    device: str = "cpu"
+    patience: int = 5000
+    lr_reduction_factor: float = 0.5
+    epochs_lbfgs: int = 1500
+    lr_lbfgs: float = 1e-3
+    history_size_lbfgs: int = 50
+    max_iter_lbfgs: int = 10
+    clip_gradient_adam: float = None
+    save_every_adam: int = 1000
+    save_every_lbfgs: int = 10
 
 
 class Trainer:
     def __init__(
         self,
         model: BuckParamEstimator,
-        loss_fn: Callable,
+        loss_fn: MAPLossFunction,
         optim_cfg: AdamOptTrainingConfigs,
-        lbfgs_loss_fn: Callable = None,
+        lbfgs_loss_fn: Optional[MAPLossFunction] = None,
         device="cpu",
     ):
         self.model = model.to(device)
@@ -517,11 +361,13 @@ class Trainer:
         
         for it in range(1, self.optim_cfg.epochs + 1):
             opt.zero_grad()
-            preds = self.model(X)
+            fwd_pred, bck_pred = self.model(X)
 
-            target_n = X[:-1, :, :2].clone().detach()  # (i_n, v_n)
-            target_np1 = X[1:, :, :2].clone().detach()  # (i_np1, v_np1)
-            targets = (target_n, target_np1)
+            fwd_targets = X[1:, :, :2].clone().detach()  # (i_np1, v_np1)
+            bck_targets = X[:-1, :, :2].clone().detach()  # (i_n, v_n)
+            
+            preds =(fwd_pred, bck_pred) 
+            targets = (fwd_targets, bck_targets)
             
             loss: torch.Tensor = self.loss_fn(self.model.logparams, preds, targets)
             loss.backward()
@@ -820,144 +666,6 @@ print(f"Determinant of Sigma for 5 LSB noise: {det_sigma_5:.4e}")
 print(f"Determinant of Sigma for 10 LSB noise: {det_sigma_10:.4e}")
 
 # %%
-def blockwise_loss(
-    pred_np1: torch.Tensor,
-    pred_n: torch.Tensor,
-    observations_np1: torch.Tensor,
-    observations_n: torch.Tensor,
-    Sigma: torch.Tensor,
-):
-    residual_np1 = pred_np1 - observations_np1  # shape (batch_size, 2)
-    residual_n = pred_n - observations_n  # shape (batch_size, 2)
-
-    # flatten the first two dimensions to get a 2D tensor
-    residual_np1 = residual_np1.view(-1, 2)  # (B*T, 2)
-    residual_n = residual_n.view(-1, 2)  # (B*T, 2)
-
-    Sig_fwfw = Sigma[:2, :2]
-    Sig_bwbw = Sigma[2:, 2:]
-    Sig_fwbw = Sigma[:2, 2:]
-
-    L_fwfw = torch.linalg.cholesky(Sig_fwfw)
-    L_bwbw = torch.linalg.cholesky(Sig_bwbw)
-
-    z_fwfw = torch.linalg.solve_triangular(L_fwfw, residual_np1.T, upper=False).T  # shape [N, 2]
-    z_bwbw = torch.linalg.solve_triangular(L_bwbw, residual_n.T, upper=False).T  # shape [N, 2]
-
-    # Assuming Sigma_fwbw is usually not invertible
-    lambda_cross = torch.mean(Sig_fwbw)  # heuristic; can be negative
-    loss_cross = (residual_np1 * residual_n).sum() * lambda_cross
-
-    return 0.5 * (z_fwfw**2).sum() + 0.5 * (z_bwbw**2).sum() + loss_cross
-
-import torch
-
-
-def diag_second_order_loss(
-    pred_np1: torch.Tensor,
-    pred_n: torch.Tensor,
-    obs_np1: torch.Tensor,
-    obs_n: torch.Tensor,
-    Sigma: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Mahalanobis loss using diagonal precision blocks A and D
-    with 2nd-order cross correction, but **no explicit B term**.
-    No matrix inverses are formed – only Cholesky + triangular solves.
-    """
-    # residuals, flattened to (N,2)
-    dtype = Sigma.dtype
-    r_np1 = (pred_np1 - obs_np1).to(dtype).reshape(-1, 2)
-    r_n = (pred_n - obs_n).to(dtype).reshape(-1, 2)
-
-    # split Σ into 2×2 blocks
-    S_pp = Sigma[:2, :2]  # Σ_{++}
-    S_mm = Sigma[2:, 2:]  # Σ_{--}
-    S_pm = Sigma[:2, 2:]  # Σ_{+-}
-    S_mp = S_pm.T  # Σ_{-+}
-
-    eps = 1e-12
-    eye = torch.eye(2, device=Sigma.device)
-
-    # Cholesky factors (SPD guaranteed -> succeed)
-    L_pp = torch.linalg.cholesky(S_pp + eps * eye)  # L_pp L_ppᵀ = Σ_{++}
-    L_mm = torch.linalg.cholesky(S_mm + eps * eye)  # L_mm L_mmᵀ = Σ_{--}
-
-    # Helper: apply Σ_{++}^{-1} to a 2-vector batch
-    def apply_inv_pp(v):  # v shape (N,2)
-        return torch.cholesky_solve(v.unsqueeze(-1), L_pp).squeeze(-1)
-
-    # Helper: apply Σ_{--}^{-1}
-    def apply_inv_mm(v):
-        return torch.cholesky_solve(v.unsqueeze(-1), L_mm).squeeze(-1)
-
-    # P r_{n+1}
-    w = apply_inv_pp(r_np1)  # (N,2)
-
-    # Build second-order correction for A term
-    #   corr = Σ_{+-} Σ_{--}^{-1} Σ_{-+} (Σ_{++}^{-1} r)
-    tmp = apply_inv_mm(w @ S_mp.T)  # (N,2)
-    corrA = (S_pm @ tmp.T).T  # (N,2)
-
-    # A-quadratic  rᵀ P r  +  rᵀ corr r
-    loss_A = (w * r_np1).sum() + (w * corrA).sum()
-
-    # Same for D block
-    u = apply_inv_mm(r_n)  # (N,2)
-    tmp2 = apply_inv_pp(u @ S_pm.T)
-    corrD = (S_mp @ tmp2.T).T
-    loss_D = (u * r_n).sum() + (u * corrD).sum()
-
-    # Total loss (no cross-term B)
-    return loss_A + loss_D
-
-
-def make_map_loss_diag_second_order(
-    nominal: Parameters, sigma0: Parameters, Sigma: torch.Tensor, scale_factor: float = 1.0
-) -> Callable:
-    """Create a loss function for MAP estimation with diagonal second-order loss."""
-    def _loss(logparams: Parameters, preds, targets):
-        i_np, v_np, i_np1, v_np1 = preds
-        y_n, y_np1 = targets
-        pred_n = torch.stack((i_np, v_np), dim=-1)
-        pred_np1 = torch.stack((i_np1, v_np1), dim=-1)
-        ll = diag_second_order_loss(
-            pred_np1=pred_np1,
-            pred_n=pred_n,
-            obs_np1=y_np1,
-            obs_n=y_n,
-            Sigma=Sigma,
-        )
-        prior = log_normal_prior(logparams, nominal, sigma0)
-        map_loss = ll + prior
-        return map_loss * scale_factor
-    return _loss
-
-
-def make_map_loss_blockwise(
-    nominal: Parameters, sigma0: Parameters, Sigma: torch.Tensor, scale_factor: float = 1.0
-) -> Callable:
-    """Create a loss function for MAP estimation with blockwise loss."""
-    
-    def _loss(logparams: Parameters, preds, targets):
-        i_np, v_np, i_np1, v_np1 = preds
-        y_n, y_np1 = targets
-        pred_n = torch.stack((i_np, v_np), dim=-1)
-        pred_np1 = torch.stack((i_np1, v_np1), dim=-1)
-        ll = blockwise_loss(
-            pred_np1=pred_np1,
-            pred_n=pred_n,
-            observations_np1=y_np1,
-            observations_n=y_n,
-            Sigma=Sigma,
-        )
-        prior = log_normal_prior(logparams, nominal, sigma0)
-        map_loss = ll + prior
-        return map_loss * scale_factor
-
-    return _loss
-
-from pinn_buck.model.model_param_estimator import measurement_to_tensors
 
 set_seed(123)
 device = "cpu"
@@ -1041,11 +749,6 @@ for idx, group_number in enumerate(l_dict.keys()):
     X = torch.tensor(io.M.data, device=device)
     model = BuckParamEstimator(param_init = NOMINAL).to(device)
 
-    prior_info = {
-        "nominal": NOMINAL,
-        "sigma0": rel_tolerance_to_sigma(REL_TOL),
-    }
-
     chol_L = l_dict[group_number]  # Cholesky factor of the noise covariance matrix
     chol_L_full = l_dict_full[group_number]  # Cholesky factor of the full noise covariance matrix
 
@@ -1053,21 +756,23 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     trainer = Trainer(
         model=model,
-        loss_fn = make_map_loss(
-            **prior_info,
+        loss_fn=build_map_loss(
+            initial_params=NOMINAL,
+            initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
+            loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
             L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
-            scale_factor=1.0,  # scale factor for the loss
         ),
-    
         optim_cfg=run_configs,
         device=device,
         # lbfgs_loss_fn=make_map_loss_blockwise(
         #     **prior_info,
-        #     Sigma=sig_r,  
+        #     Sigma=sig_r,
         # )
-        lbfgs_loss_fn=make_map_loss_diag_second_order(
-            **prior_info,
-            Sigma = sig_r,  # full noise covariance matrix
+        lbfgs_loss_fn=build_map_loss(
+            initial_params=NOMINAL,
+            initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
+            loss_likelihood_function=diag_second_order_loss,  # loss function for the forward-backward pass
+            Sigma=sig_r,  # full noise covariance matrix
         ),
     )
 

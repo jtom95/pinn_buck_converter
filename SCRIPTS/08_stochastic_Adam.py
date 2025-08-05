@@ -25,7 +25,7 @@ from pinn_buck.noise import add_noise_to_Measurement
 
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
 from pinn_buck.model.model_param_estimator import BuckParamEstimator
-from pinn_buck.model.losses import l2_loss
+from pinn_buck.model.loss_function_configs import l2_loss
 from pinn_buck.io_model import TrainingRun
 
 from pinn_buck.io import LoaderH5
