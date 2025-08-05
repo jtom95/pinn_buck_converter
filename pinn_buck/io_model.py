@@ -8,6 +8,11 @@ from .config import Parameters
 class TrainingRun:
     def __init__(self, df: pd.DataFrame):
         self.df = df
+        
+    @property
+    def best_loss(self) -> float:
+        """Get the best loss from the DataFrame."""
+        return self.df["loss"].min()
 
     @property
     def best_parameters(self) -> NamedTuple:

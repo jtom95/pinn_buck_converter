@@ -245,190 +245,211 @@ from dataclasses import dataclass
 # for simplicity let's define a dataclass for the training configurations
 
 
-class NormalizerMeanStd:
-    """A simple normalizer that normalizes the data using mean and standard deviation."""
+# class NormalizerMeanStd:
+#     """A simple normalizer that normalizes the data using mean and standard deviation."""
 
-    def __init__(self, x: torch.Tensor):
-        """Initialize the normalizer with the mean and standard deviation of the data."""
-        self.mean = x.mean(dim=0, keepdim=True)
-        self.std = x.std(dim=0, keepdim=True)
+#     def __init__(self, x: torch.Tensor):
+#         """Initialize the normalizer with the mean and standard deviation of the data."""
+#         self.mean = x.mean(dim=0, keepdim=True)
+#         self.std = x.std(dim=0, keepdim=True)
 
-    def normalize(self, x: torch.Tensor) -> torch.Tensor:
-        """Normalize the data."""
-        return (x - self.mean) / self.std
-    def normalize_current(self, i: torch.Tensor) -> torch.Tensor:
-        """Normalize the current data."""
-        return (i - self.mean[:, 0]) / self.std[:, 0]
-    def normalize_voltage(self, v: torch.Tensor) -> torch.Tensor:
-        """Normalize the voltage data."""
-        return (v - self.mean[:, 1]) / self.std[:, 1]
+#     def normalize(self, x: torch.Tensor) -> torch.Tensor:
+#         """Normalize the data."""
+#         return (x - self.mean) / self.std
+#     def normalize_current(self, i: torch.Tensor) -> torch.Tensor:
+#         """Normalize the current data."""
+#         return (i - self.mean[:, 0]) / self.std[:, 0]
+#     def normalize_voltage(self, v: torch.Tensor) -> torch.Tensor:
+#         """Normalize the voltage data."""
+#         return (v - self.mean[:, 1]) / self.std[:, 1]
 
-    def denormalize(self, x: torch.Tensor) -> torch.Tensor:
-        """Denormalize the data."""
-        return x * self.std + self.mean
+#     def denormalize(self, x: torch.Tensor) -> torch.Tensor:
+#         """Denormalize the data."""
+#         return x * self.std + self.mean
 
-    def denormalize_current(self, i: torch.Tensor) -> torch.Tensor:
-        """Denormalize the current data."""
-        return i * self.std[:, 0] + self.mean[:, 0]
-    def denormalize_voltage(self, v: torch.Tensor) -> torch.Tensor:
-        """Denormalize the voltage data."""
-        return v * self.std[:, 1] + self.mean[:, 1]
+#     def denormalize_current(self, i: torch.Tensor) -> torch.Tensor:
+#         """Denormalize the current data."""
+#         return i * self.std[:, 0] + self.mean[:, 0]
+#     def denormalize_voltage(self, v: torch.Tensor) -> torch.Tensor:
+#         """Denormalize the voltage data."""
+#         return v * self.std[:, 1] + self.mean[:, 1]
 
-    def normalize_model_predictions(
-        self, preds: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Normalize the model predictions."""
-        i_pn, v_pn, i_pnp1, v_pnp1 = preds
-        return (
-            self.normalize_current(i_pn),
-            self.normalize_voltage(v_pn),
-            self.normalize_current(i_pnp1),
-            self.normalize_voltage(v_pnp1),
-        )
-    def denormalize_model_predictions(
-        self, preds: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Denormalize the model predictions."""
-        i_pn, v_pn, i_pnp1, v_pnp1 = preds
-        return (
-            self.denormalize_current(i_pn),
-            self.denormalize_voltage(v_pn),
-            self.denormalize_current(i_pnp1),
-            self.denormalize_voltage(v_pnp1),
-        )
+#     def normalize_model_predictions(
+#         self, preds: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+#     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+#         """Normalize the model predictions."""
+#         i_pn, v_pn, i_pnp1, v_pnp1 = preds
+#         return (
+#             self.normalize_current(i_pn),
+#             self.normalize_voltage(v_pn),
+#             self.normalize_current(i_pnp1),
+#             self.normalize_voltage(v_pnp1),
+#         )
+#     def denormalize_model_predictions(
+#         self, preds: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+#     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+#         """Denormalize the model predictions."""
+#         i_pn, v_pn, i_pnp1, v_pnp1 = preds
+#         return (
+#             self.denormalize_current(i_pn),
+#             self.denormalize_voltage(v_pn),
+#             self.denormalize_current(i_pnp1),
+#             self.denormalize_voltage(v_pnp1),
+#         )
 
-    def normalize_y(
-        self, y: torch.Tensor
-    ) -> torch.Tensor:
-        """Normalize the output data."""
-        return (y - self.mean) / self.std
+#     def normalize_y(
+#         self, y: torch.Tensor
+#     ) -> torch.Tensor:
+#         """Normalize the output data."""
+#         return (y - self.mean) / self.std
 
 from typing import Optional
-from pinn_buck.model.model_param_estimator import BuckParamEstimator
+from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator
 from pinn_buck.model.loss_function_archive import build_map_loss, fw_bw_loss_whitened, diag_second_order_loss
 from pinn_buck.model.loss_function_configs import LikelihoodLossFunction, PriorLossFunction, MAPLossFunction
 
 
 @dataclass
-class AdamOptTrainingConfigs:
+class TrainingConfigs:
     savename: str = "saved_run"
     out_dir: Path = Path(".")
-    lr: float = 1e-3
-    epochs: int = 20_000
     device: str = "cpu"
-    patience: int = 5000
-    lr_reduction_factor: float = 0.5
+    patience: int = 5_000
+    lr_adam: float = 1e-3
+    epochs_adam: int = 20_000
+    lr_reduction_factor_adam: float = 0.5
     epochs_lbfgs: int = 1500
     lr_lbfgs: float = 1e-3
     history_size_lbfgs: int = 50
     max_iter_lbfgs: int = 10
     clip_gradient_adam: float = None
     save_every_adam: int = 1000
-    save_every_lbfgs: int = 10
+    save_every_lbfgs: int = 100
 
 
 class Trainer:
     def __init__(
         self,
-        model: BuckParamEstimator,
+        model: BaseBuckEstimator,
         loss_fn: MAPLossFunction,
-        optim_cfg: AdamOptTrainingConfigs,
+        cfg: TrainingConfigs = TrainingConfigs(),
         lbfgs_loss_fn: Optional[MAPLossFunction] = None,
         device="cpu",
     ):
         self.model = model.to(device)
+        self.model_class = model.__class__
         self.loss_fn = loss_fn
         self.lbfgs_loss_fn = lbfgs_loss_fn if lbfgs_loss_fn is not None else loss_fn
-        self.optim_cfg = optim_cfg
+        self.cfg = cfg
         self.device = device
-        self.history = {"loss": [], "params": [], "lr": []}
+        self.history = {"loss": [], "params": [], "lr": [], "optimizer": []}
+        
+    def log_results(self, it: int, loss: torch.Tensor, est: Parameters, opt: torch.optim.Optimizer):
+        est = self.model.get_estimates()
+        optimization_type = str(opt.__class__.__name__)
+        
+        # optimization_type = None:
+        # if isinstance(opt, torch.optim.Adam):
+        #     optimization_type = "Adam"
+        # elif isinstance(opt, torch.optim.LBFGS):
+        #     optimization_type = "LBFGS"
+        # else:
+        #     optimization_type = str(opt.__class__.__name__)
+        
+        # Collect gradients for scalar parameters
+        scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
 
-    def fit(self, X):
-        X = X.detach().to(self.device)
+        # Collect gradients for scalar parameters
+        scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
+        grads = [
+            getattr(self.model, f"log_{name}").grad.view(1)
+            for name in scalar_param_names
+            if getattr(self.model, f"log_{name}").grad is not None
+        ]
 
-        opt = torch.optim.Adam(self.model.parameters(), lr=self.optim_cfg.lr)
+        # Add gradients for Rloads
+        for rload_param in self.model.log_Rloads:
+            if rload_param.grad is not None:
+                grads.append(rload_param.grad.view(1))
+
+        # Compute gradient norm
+        if grads:
+            gradient_vector = torch.cat(grads)
+            gradient_norm = gradient_vector.norm().item()
+        else:
+            gradient_norm = float("nan")  # no gradients found (shouldn't happen during training)
+
+        # Print parameter estimates
+        print(
+            f"[{optimization_type}] Iteration {it}, gradient_norm {gradient_norm:4e}, loss {loss:4e}, Parameters:",
+            f"L={est.L:.3e}, RL={est.RL:.3e}, C={est.C:.3e}, ",
+            f"RC={est.RC:.3e}, Rdson={est.Rdson:.3e}, ",
+            f"Rloads=[{', '.join(f'{r:.3e}' for r in est.Rloads)}], ",
+            f"Vin={est.Vin:.3f}, VF={est.VF:.3e}",
+        )
+
+        est = self.model.get_estimates()
+        # update the histories with the last Adam iteration
+        self.history["optimizer"].append(optimization_type)
+        self.history["loss"].append(loss.item())
+        self.history["params"].append(est)
+        self.history["lr"].append(opt.param_groups[0]["lr"])
+
+    def adam_fit(self, X: torch.Tensor, targets: Tuple[torch.Tensor, torch.Tensor]):
+        """
+        Fit the model using Adam optimizer.
+        
+        Args:
+            X (torch.Tensor): Input tensor of shape (B, T, 4) where B is the batch size and T is the number of transients.
+            targets (Tuple[torch.Tensor, torch.Tensor]): Tuple of tensors containing the forward and backward targets.
+        """
+        opt = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr_adam)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             opt,
             mode="min",
-            factor=self.optim_cfg.lr_reduction_factor,
-            patience=self.optim_cfg.patience,
-        )
+            factor=self.cfg.lr_reduction_factor_adam,
+            patience=self.cfg.patience,
+        )        
 
-        # Initialize the best loss
-        best_loss = float("inf")
+        for it in range(1, self.cfg.epochs_adam + 1):
+            opt.zero_grad() # reset gradients
 
-        
-        
-        for it in range(1, self.optim_cfg.epochs + 1):
-            opt.zero_grad()
-            fwd_pred, bck_pred = self.model(X)
+            preds = self.model(X) # forward pass
 
-            fwd_targets = X[1:, :, :2].clone().detach()  # (i_np1, v_np1)
-            bck_targets = X[:-1, :, :2].clone().detach()  # (i_n, v_n)
-            
-            preds =(fwd_pred, bck_pred) 
-            targets = (fwd_targets, bck_targets)
-            
-            loss: torch.Tensor = self.loss_fn(self.model.logparams, preds, targets)
-            loss.backward()
+            loss: torch.Tensor = self.loss_fn(
+                parameter_guess=self.model.logparams, 
+                preds=preds, 
+                targets=targets
+            )
 
-            if self.optim_cfg.clip_gradient_adam is not None:
+            loss.backward() # backward pass
+
+            if self.cfg.clip_gradient_adam is not None:
                 # Clip gradients to prevent exploding gradients
-                old_gr = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.optim_cfg.clip_gradient_adam)                                                      
+                old_gr = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.clip_gradient_adam)                                                      
 
+            # update parameters
             opt.step()
             scheduler.step(loss.item())
 
-            if it % 1000 == 0:
-                est = self.model.get_estimates()
-                if loss.item() < best_loss:
-                    best_loss = loss.item()
+            # Print training progress every `save_every_adam` iterations
+            if it % self.cfg.save_every_adam == 0:
+                self.log_results(it, loss, self.model.get_estimates(), opt)
+                
 
-                # Collect gradients for scalar parameters
-                scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
-                grads = [
-                    getattr(self.model, f"log_{name}").grad.view(1)
-                    for name in scalar_param_names
-                    if getattr(self.model, f"log_{name}").grad is not None
-                ]
-
-                # Add gradients for Rloads
-                for rload_param in self.model.log_Rloads:
-                    if rload_param.grad is not None:
-                        grads.append(rload_param.grad.view(1))
-
-                # Compute gradient norm
-                if grads:
-                    gradient_vector = torch.cat(grads)
-                    gradient_norm = gradient_vector.norm().item()
-                else:
-                    gradient_norm = float("nan")  # no gradients found (shouldn't happen during training)
-
-                # Print parameter estimates
-                print(
-                    f"[Adam] Iteration {it}, gradient_norm {gradient_norm:4e}, loss {loss:4e}, Parameters:",
-                    f"L={est.L:.3e}, RL={est.RL:.3e}, C={est.C:.3e}, ",
-                    f"RC={est.RC:.3e}, Rdson={est.Rdson:.3e}, ",
-                    f"Rloads=[{', '.join(f'{r:.3e}' for r in est.Rloads)}], ",
-                    f"Vin={est.Vin:.3f}, VF={est.VF:.3e}",
-                )
-
-            if it % self.optim_cfg.save_every_adam == 0:
-                est = self.model.get_estimates()
-                # update the histories with the last Adam iteration
-                self.history["loss"].append(loss.item())
-                self.history["params"].append(est)
-                self.history["lr"].append(opt.param_groups[0]["lr"])
-
-        # # → LBFGS
-        # LBFGS optimization tends to find stable solutions that also minimize the gradient norm.
-        # This will be useful when we want to compute the Laplace posterior, which relies on the Hessian of the loss function.
-
+    def lbfgs_fit(self, X: torch.Tensor, targets: Tuple[torch.Tensor, torch.Tensor]):
+        """
+        Fit the model using LBFGS optimizer.
+        Args:
+            X (torch.Tensor): Input tensor of shape (B, T, 4) where B is the batch size and T is the number of transients.
+            targets (Tuple[torch.Tensor, torch.Tensor]): Tuple of tensors containing the forward and backward targets.
+        """
+        # Initialize LBFGS optimizer
         lbfgs_optim = torch.optim.LBFGS(
             self.model.parameters(),
-            lr=self.optim_cfg.lr_lbfgs,
-            max_iter=self.optim_cfg.max_iter_lbfgs,  # inner line-search iterations
-            history_size=self.optim_cfg.history_size_lbfgs,  # critical for stability
+            lr=self.cfg.lr_lbfgs,
+            max_iter=self.cfg.max_iter_lbfgs,  # inner line-search iterations
+            history_size=self.cfg.history_size_lbfgs,  # critical for stability
         )
 
         nan_abort = True  # raise RuntimeError on NaN/Inf
@@ -440,9 +461,7 @@ class Trainer:
             lbfgs_optim.zero_grad()
 
             pred = self.model(X)
-            loss_val = self.lbfgs_loss_fn(
-                self.model.logparams, pred, targets
-            )
+            loss_val = self.lbfgs_loss_fn(self.model.logparams, pred, targets)
 
             # 1)  finite-loss check
             if not torch.isfinite(loss_val):
@@ -460,7 +479,7 @@ class Trainer:
         # ------------------------------------------------------------------
         #  LBFGS training loop
         # ------------------------------------------------------------------
-        for it in range(1, self.optim_cfg.epochs_lbfgs+1):
+        for it in range(1, self.cfg.epochs_lbfgs + 1):
             try:
                 loss = lbfgs_optim.step(closure)
             except RuntimeError as err:
@@ -473,47 +492,23 @@ class Trainer:
                     print("[LBFGS] Non-finite parameter detected — aborting.")
                     break
 
-            if it % 100 == 0:
-                est = self.model.get_estimates()
+            if it % self.cfg.save_every_lbfgs == 0:
+                self.log_results(it, loss, self.model.get_estimates(), lbfgs_optim)
 
-                if loss.item() < best_loss:
-                    best_loss = loss.item()
+    def fit(self, X):
+        X = X.detach().to(self.device)
+        targets = X[1:, :, :2].clone().detach(), X[:-1, :, :2].clone().detach()  
 
-                # Collect gradients for scalar parameters
-                scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
-                grads = [
-                    getattr(self.model, f"log_{name}").grad.view(1)
-                    for name in scalar_param_names
-                    if getattr(self.model, f"log_{name}").grad is not None
-                ]
+        self.adam_fit(X, targets)
 
-                # Add gradients for Rloads
-                for rload_param in self.model.log_Rloads:
-                    if rload_param.grad is not None:
-                        grads.append(rload_param.grad.view(1))
+        # # → LBFGS
+        # LBFGS optimization tends to find stable solutions that also minimize the gradient norm.
+        # This will be useful when we want to compute the Laplace posterior, which relies on the Hessian of the loss function.
+        self.lbfgs_fit(X, targets)
 
-                # Compute gradient norm
-                if grads:
-                    gradient_vector = torch.cat(grads)
-                    gradient_norm = gradient_vector.norm().item()
-                else:
-                    gradient_norm = float("nan")  # no gradients found (shouldn't happen during training)
+        # After training, we can save the history of losses and parameters
+        print("Training concluded. Saving the history...")
 
-
-                print(
-                    f"[LBFGS] Iteration {self.optim_cfg.epochs + it}, gradient_norm {gradient_norm:4e}, loss {loss:4e},  Parameters:",
-                    f"L={est.L:.3e}, RL={est.RL:.3e}, C={est.C:.3e}, "
-                    f"RC={est.RC:.3e}, Rdson={est.Rdson:.3e}, "
-                    f"Rloads=[{', '.join(f'{r:.3e}' for r in est.Rloads)}], "
-                    f"Vin={est.Vin:.3f}, VF={est.VF:.3e}",
-                )
-
-            if it % self.optim_cfg.save_every_lbfgs == 0:
-                est = self.model.get_estimates()
-                # update the histories with the last BFGS iteration
-                self.history["loss"].append(loss.item())
-                self.history["params"].append(est)
-                self.history["lr"].append(opt.param_groups[0]["lr"])
 
         # Save the history to a CSV file
         training_run = TrainingRun.from_histories(
@@ -522,19 +517,17 @@ class Trainer:
         )
 
         # generate the output directory if it doesn't exist
-        self.optim_cfg.out_dir.mkdir(parents=True, exist_ok=True)
+        self.cfg.out_dir.mkdir(parents=True, exist_ok=True)
 
         # if savename doesn't end with .csv, add it
-        savename = self.optim_cfg.savename
+        savename = self.cfg.savename
 
         if not savename.endswith(".csv"):
             savename += ".csv"
 
-        training_run.save_to_csv(self.optim_cfg.out_dir / savename)
+        training_run.save_to_csv(self.cfg.out_dir / savename)
         print("Concluded training.")
-
-        print("Training completed successfully.")
-        print(f"Best loss: {best_loss:.4e}")
+        print(f"Best loss: {training_run.best_loss:.4e}")
         best_params = training_run.best_parameters
         opt_model = BuckParamEstimator(
             param_init = best_params,
@@ -677,14 +670,14 @@ h5filename = "buck_converter_Shuai_processed.h5"
 out_dir = Path.cwd() / "RESULTS" / "Bayesian" / "FullSigma_MAP1"
 
 
-run_configs = AdamOptTrainingConfigs(
+run_configs = TrainingConfigs(
     savename="adam_run.csv",
     out_dir=out_dir,
-    lr=1e-3,
-    epochs=15_000,
+    lr_adam=1e-3,
+    epochs_adam=15_000,
     device="cpu",
     patience=3000,
-    lr_reduction_factor=0.5,
+    lr_reduction_factor_adam=0.5,
     epochs_lbfgs=1_000,
     lr_lbfgs=1e-3,
     history_size_lbfgs=100,
@@ -762,7 +755,7 @@ for idx, group_number in enumerate(l_dict.keys()):
             loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
             L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
         ),
-        optim_cfg=run_configs,
+        cfg=run_configs,
         device=device,
         # lbfgs_loss_fn=make_map_loss_blockwise(
         #     **prior_info,
