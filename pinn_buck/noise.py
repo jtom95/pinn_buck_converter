@@ -3,7 +3,7 @@ import numpy as np
 from typing import List
 import matplotlib.pyplot as plt
 from pathlib import Path
-from .io_model import TrainingRun
+from .io_model import TrainingHistory
 
 
 def add_noise_to_TransientData(
@@ -101,11 +101,11 @@ def get_repeated_noisy_runs(run_dir: Path):
         print(f"Processing {csv_file.name}")
         noise_level = float(csv_file.stem.split("_")[-2])  # Extract noise level from filename
         if noise_level not in runs:
-            tr = TrainingRun.from_csv(csv_file)
+            tr = TrainingHistory.from_csv(csv_file)
             runs[noise_level] = [tr.drop_columns(["learning_rate"])]
 
         else:
-            tr = TrainingRun.from_csv(csv_file)
+            tr = TrainingHistory.from_csv(csv_file)
             runs[noise_level].append(tr.drop_columns(["learning_rate"]))
     return runs
 

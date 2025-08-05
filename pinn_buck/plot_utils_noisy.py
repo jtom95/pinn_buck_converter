@@ -4,7 +4,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-from .config import Parameters, TrainingRun
+from .config import Parameters, TrainingHistory
 from .io import Measurement
 
 
@@ -52,7 +52,7 @@ def inspect_repeated_lossy_data(
 
 
 def plot_repeated_tracked_parameters(
-    runs: List[TrainingRun],
+    runs: List[TrainingHistory],
     figsize=(12, 8),
     skip_loss: bool = False,
     target: Parameters = None,
@@ -148,7 +148,7 @@ def plot_repeated_tracked_parameters(
 
 
 def plot_final_percentage_error_multi_boxplot(
-    runs: Dict[str, List["TrainingRun"]],  # {label → List[TrainingRun]}
+    runs: Dict[str, List["TrainingHistory"]],  # {label → List[TrainingHistory]}
     target: "Parameters",  # ground-truth parameters
     skip_params: Iterable[str] = (),
     ax: plt.Axes = None,
@@ -157,13 +157,13 @@ def plot_final_percentage_error_multi_boxplot(
     select_lowest_loss: bool = True,
 ):
     """
-    Clustered box-plot of |error| (%) for several TrainingRuns.
+    Clustered box-plot of |error| (%) for several TrainingHistorys.
 
     Parameters
     ----------
     runs : dict
         Keys   → legend labels
-        Values → List of TrainingRun instances (must expose .best_parameters & .df)
+        Values → List of TrainingHistory instances (must expose .best_parameters & .df)
     target : Parameters
         Reference (ground-truth) parameter set.
     skip_params : iterable of str

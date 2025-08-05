@@ -3,7 +3,7 @@ from typing import Iterable, List, Dict
 import pandas as pd
 import matplotlib.pyplot as plt
 from .config import Parameters
-from .io_model import TrainingRun
+from .io_model import TrainingHistory
 import numpy as np
 
 def plot_tracked_parameters(
@@ -26,7 +26,7 @@ def plot_tracked_parameters(
         skip_loss (bool): Whether to skip plotting the loss curve.
         target (Parameters, optional): If provided, plots horizontal reference lines for nominal values.
     """
-    if isinstance(df, TrainingRun):
+    if isinstance(df, TrainingHistory):
         df = df.df
     
     params = [col for col in df.columns if col != "loss"] if skip_loss else df.columns
@@ -89,7 +89,7 @@ def plot_percentage_error_evolution(df: pd.DataFrame, target: Parameters):
         df (pd.DataFrame): DataFrame with parameter estimates.
         target (Parameters): Target parameters for reference.
     """
-    if isinstance(df, TrainingRun):
+    if isinstance(df, TrainingHistory):
         df = df.df
     
     errors = {name: [] for name in Parameters._fields}
@@ -116,7 +116,7 @@ def plot_percentage_error_evolution(df: pd.DataFrame, target: Parameters):
 
 
 def plot_final_percentage_error(
-    training_run: TrainingRun,
+    training_run: TrainingHistory,
     target: Parameters,
     ax: plt.Axes = None,
     figsize=(6, 3),
@@ -152,7 +152,7 @@ def plot_final_percentage_error(
 
 
 def plot_final_percentage_error_multi(
-    runs: Dict[str, "TrainingRun"],  # {label → TrainingRun}
+    runs: Dict[str, "TrainingHistory"],  # {label → TrainingHistory}
     target: "Parameters",  # ground-truth parameters
     skip_params: Iterable[str] = (),
     ax: plt.Axes = None,
@@ -161,13 +161,13 @@ def plot_final_percentage_error_multi(
     select_lowest_loss: bool = True
 ):
     """
-    Clustered bar-plot of |error| (%) for several TrainingRuns.
+    Clustered bar-plot of |error| (%) for several TrainingHistorys.
 
     Parameters
     ----------
     runs : dict
         Keys   → legend labels
-        Values → TrainingRun instances (must expose .best_parameters & .df)
+        Values → TrainingHistory instances (must expose .best_parameters & .df)
     target : Parameters
         Reference (ground-truth) parameter set.
     skip_params : iterable of str

@@ -7,10 +7,10 @@ import sys
 # sys.path.append(str(Path(__file__).parent.parent))
 
 from pinn_buck.config import Parameters, NOMINAL
-from pinn_buck.io_model import TrainingRun
+from pinn_buck.io_model import TrainingHistory
 from pinn_buck.plot_utils import plot_tracked_parameters, plot_final_percentage_error
 
-tr = TrainingRun.from_csv("RESULTS/removed_nn/only_current.csv")
+tr = TrainingHistory.from_csv("RESULTS/removed_nn/only_current.csv")
 
 # # discard the first 1000 iterations for better visualization
 # df = df.iloc[3:].reset_index(drop=True)
