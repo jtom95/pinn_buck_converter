@@ -64,7 +64,7 @@ class Trainer:
             f"Rloads=[{', '.join(f'{r:.3e}' for r in parameters.Rloads)}], ",
             f"Vin={parameters.Vin:.3f}, VF={parameters.VF:.3e}",
         )
-        
+
     def initialize_optimizer(self, optimizer_type: str, lr: float):
         """
         Initialize the optimizer based on the type and learning rate.
@@ -209,10 +209,13 @@ class Trainer:
             # copy the model so we don't modify the original model
             model_ = self.model_class(param_init=parameter_guess).to(self.device)
         else:
-            model_ = self.model
-        
-        preds = model_(X_)
-        loss = loss_fn(parameter_guess=model_.logparams, preds=preds, targets=targets)
+            model_ = self.model.to(self.device)
+
+        model_.eval()
+        with torch.no_grad():
+            preds = model_(X_)
+            loss = loss_fn(parameter_guess=model_.logparams, preds=preds, targets=targets)
+
         return loss
 
     def lbfgs_fit(
