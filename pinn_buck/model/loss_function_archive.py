@@ -5,7 +5,6 @@ from .loss_function_configs import LikelihoodLossFunction, PriorLossFunction, MA
 from ..parameter_transformation import make_log_param
 
 
-
 ## Likelihood Loss Functions
 def fw_bw_loss_whitened(
     fwd_pred: torch.Tensor,
@@ -17,17 +16,33 @@ def fw_bw_loss_whitened(
     """
     Compute r^T Σ^{-1} r via Cholesky whitening: r -> z = L^{-1} r.
     """
-    fwd_residual = (fwd_pred - fwd_target).view(-1, 2)  # shape (B*T, 2)
-    bck_residual = (bck_pred - bck_target).view(-1, 2)  # shape (B*T, 2)
+    fwd_residual = (fwd_pred - fwd_target)  # shape (B, T, 2)
+    bck_residual = (bck_pred - bck_target)  # shape (B, T, 2)
 
-    r = torch.cat((fwd_residual, bck_residual), dim=1)  # (B, 4)
-    z = torch.linalg.solve_triangular(L, r.T, upper=False).T  # shape [N, 4]
+    r = torch.cat((fwd_residual, bck_residual), dim=-1)  # (B, T, 4)
+
+    if L.dim() == 2:
+        # if the L tensor has 2 dimensions, it is a single covariance matrix
+        r_flat = r.view(-1, 4)  # flatten to (B*T, 4)
+        z = torch.linalg.solve_triangular(L, r_flat.T, upper=False).T  # shape [N, 4]
+        return 0.5 * z.square().sum()
+
+    # if the L tensor has 3 dimensions, the first dimension is the number of transients
+    if L.dim() != 3 or L.shape[1:] != (4, 4):
+        raise ValueError("L must have shape (4,4) or (T,4,4)")
+
+    # --- per‑transient covariances ------------------------------------------------
+    # r : (B, T, 4)  → permute to (T, B, 4) so transient is leading batch dim
+    r_tb4 = r.permute(1, 0, 2)  # (T, B, 4)
+    # RHS for solve_triangular must be (T, 4, B)
+    z = torch.linalg.solve_triangular(L, r_tb4.transpose(1, 2), upper=False)  # (T, 4, B)
+
     ## IMPORTANT NOTE:
     # Note that using solve_triangular is much more stable for the gradients and optimization
     # compared to z = torch.matmul(r, L_inv.T)  # whitening: (B, 4)
     # even if L_inv = chol_inv(L) is used, it is still more stable to use solve_triangular
     # because it avoids the numerical issues with the inverse of the Cholesky factor.
-    return 0.5 * (z**2).sum()
+    return 0.5 * z.square().sum()
 
 
 def blockwise_loss(
@@ -137,7 +152,6 @@ def log_normal_prior(logparams: Parameters, nominal: Parameters, sigma: Paramete
     return total
 
 
-
 ## Create MAP loss function for training
 def build_map_loss(
     initial_params: Parameters,
@@ -145,6 +159,7 @@ def build_map_loss(
     loss_likelihood_function: Union[LikelihoodLossFunction, Callable],
     prior_function: Optional[Union[PriorLossFunction, Callable]] = log_normal_prior,
     prior_function_kwargs: Optional[dict] = None,
+    weight_prior_loss: float = 1.0,
     **kwargs,
 ) -> MAPLossFunction:
     """
@@ -186,7 +201,7 @@ def build_map_loss(
             prior_kwargs = prior_function_kwargs
 
         prior = prior_function(parameter_guess, **prior_kwargs)
-        map_loss = ll + prior
+        map_loss = ll + weight_prior_loss * prior
         return map_loss
 
     return LossFunctionFactory.wrap_map_loss(_map_loss)

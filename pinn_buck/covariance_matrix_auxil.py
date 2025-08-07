@@ -50,13 +50,28 @@ def generate_residual_covariance_matrix(
 ## Cholesky decomposition of the covariance matrix
 def chol_inv(mat: torch.Tensor, eps=1e-9) -> torch.Tensor:
     """return (LLᵀ)⁻¹ᐟ² = L⁻ᵀ   where LLᵀ = mat (add jitter if needed)"""
-    mat = mat + eps * torch.eye(mat.size(0), device=mat.device)
-    L = torch.linalg.cholesky(mat)
-    return torch.cholesky_inverse(L)  # same as L⁻ᵀ · L⁻¹
+    if mat.dim() == 2:
+        mat = mat + eps * torch.eye(mat.size(0), device=mat.device)
+        L = torch.linalg.cholesky(mat)
+        return torch.cholesky_inverse(L)  # same as L⁻ᵀ · L⁻¹
+    if mat.dim() == 3:
+        # we apply chol_inv to each 2x2 matrix in the batch
+        return torch.stack([
+            chol_inv(mat[i], eps=eps) for i in range(mat.size(0))
+        ], dim=0)
+    raise ValueError("Input tensor must be 2D or 3D.")
 
 
 def chol(mat: torch.Tensor, eps=1e-9) -> torch.Tensor:
     """return L where LLᵀ = mat (add jitter if needed)"""
-    mat = mat + eps * torch.eye(mat.size(0), device=mat.device)
-    L = torch.linalg.cholesky(mat)
-    return L  # same as L⁻ᵀ · L⁻¹
+    # if the numdims of mat is 2, we can use the cholesky decomposition directly
+    if mat.dim() == 2:
+        mat = mat + eps * torch.eye(mat.size(0), device=mat.device)
+        L = torch.linalg.cholesky(mat)
+        return L  # same as L⁻ᵀ · L⁻¹
+    if mat.dim() == 3:
+        # we apply chol to each 2x2 matrix in the batch
+        return torch.stack([
+            chol(mat[i], eps=eps) for i in range(mat.size(0))
+        ], dim=0)
+    raise ValueError("Input tensor must be 2D or 3D.")

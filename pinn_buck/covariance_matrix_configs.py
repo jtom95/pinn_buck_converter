@@ -61,9 +61,12 @@ def _parse_data_noise(data_noise: Union[float, torch.Tensor, Iterable], **kwargs
     if isinstance(data_noise, float):
         a, b = data_noise, data_noise
     elif isinstance(data_noise, torch.Tensor):
-        if data_noise.shape != (2, 2):
+        if data_noise.shape == (2,):
+            a, b = data_noise[0], data_noise[1]
+        elif data_noise.shape == (2, 2):
+            a, b = data_noise[0, 0], data_noise[1, 1]
+        else: 
             raise ValueError("If data_noise is a tensor, it must be 2x2.")
-        a, b = data_noise[0, 0], data_noise[1, 1]
     elif isinstance(data_noise, Iterable):
         data_noise = list(data_noise)
         if len(data_noise) != 2:

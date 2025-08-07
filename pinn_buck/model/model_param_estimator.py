@@ -187,6 +187,9 @@ class BuckParamEstimator(BaseBuckEstimator):
         # Forward and backward predictions (vectorized)
         fwd_pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)
         bck_pred = self._rk4_step(i[1:], v[1:], D[:-1], dt[:-1], p, sign=-1)
+        # note that in the bck_pred we use D[:-1] and dt[:-1], this is because we want to predict the 
+        # voltages and currents at the time n, given their values after the dt time at time n+1. However, 
+        # D and dt refer to the time step from n to n+1, so we need to use the same D and dt as in the forward prediction.
 
         # transform the tuple into a tensor by stacking on the last dimension
         fwd_pred = torch.stack(fwd_pred, dim=-1)  # shape (B, T-1, 2)
