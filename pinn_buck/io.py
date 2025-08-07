@@ -1,10 +1,12 @@
 from dataclasses import dataclass, field
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 from pathlib import Path
 
+import torch
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
+
 
 @dataclass
 class TransientData:
@@ -15,40 +17,72 @@ class TransientData:
     D: np.ndarray = field(default_factory=lambda: np.array([]))
 
     def plot_transient(
-        self, slice_index: slice, ax: List[plt.Axes] = None, label: str = None, 
-        markers=None, linestyle="-",
-        figsize=(8, 3), include_D: bool = False, legend: bool = True, 
-        color=None, D_color="orange", D_weight=0.5,
-        legend_loc: str = None, ignore_dt: bool = False, markersize=None, grid: bool = False
+        self,
+        slice_index: Optional[slice] = None,
+        ax: List[plt.Axes] = None,
+        label: str = None,
+        markers=None,
+        linestyle="-",
+        figsize=(8, 3),
+        include_D: bool = False,
+        legend: bool = True,
+        color=None,
+        D_color="orange",
+        D_weight=0.5,
+        legend_loc: str = None,
+        ignore_dt: bool = False,
+        markersize=None,
+        grid: bool = False,
     ) -> plt.Axes:
         if ax is None:
             fig, ax = plt.subplots(1, 3, figsize=figsize, constrained_layout=True)
-            
-
 
         time = self.time[slice_index] if slice_index is not None else self.time
-        v = self.v[slice_index] if slice_index is not None else self.time
-        i = self.i[slice_index] if slice_index is not None else self.time
-        dt = self.dt[slice_index] if slice_index is not None else self.time
+        v = self.v[slice_index] if slice_index is not None else self.v
+        i = self.i[slice_index] if slice_index is not None else self.i
+        dt = self.dt[slice_index] if slice_index is not None else self.dt
         if include_D:
-            D = self.D[slice_index] if slice_index is not None else self.time
-                
-                
-        ax[0].plot(time, v, label=label, color=color, marker=markers, linestyle=linestyle, markersize=markersize)
+            D = self.D[slice_index] if slice_index is not None else self.D
+
+        ax[0].plot(
+            time,
+            v,
+            label=label,
+            color=color,
+            marker=markers,
+            linestyle=linestyle,
+            markersize=markersize,
+        )
         ax[0].xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x * 1e6:.0f}"))
 
         ax[0].set_xlabel("Time (us)")
         ax[0].set_ylabel("Voltage (V)")
         ax[0].set_title("Voltage Transient")
 
-        ax[1].plot(time, i, label=label, color=color, marker=markers, linestyle=linestyle, markersize=markersize)
+        ax[1].plot(
+            time,
+            i,
+            label=label,
+            color=color,
+            marker=markers,
+            linestyle=linestyle,
+            markersize=markersize,
+        )
         ax[1].xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x * 1e6:.0f}"))
         ax[1].set_xlabel("Time (us)")
         ax[1].set_ylabel("Current (A)")
         ax[1].set_title("Current Transient")
 
         if not ignore_dt:
-            ax[2].plot(time, dt, label=label, color=color, marker=markers, linestyle=linestyle, markersize=markersize)
+            ax[2].plot(
+                time,
+                dt,
+                label=label,
+                color=color,
+                marker=markers,
+                linestyle=linestyle,
+                markersize=markersize,
+            )
             ax[2].xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x * 1e6:.0f}"))
             ax[2].yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x * 1e6:.2f}"))
             ax[2].set_xlabel("Time (us)")
@@ -110,22 +144,26 @@ class Measurement:
         self.transient_lengths = [len(tr.i) for tr in transients]
 
         # usually we have 3 transients
+
     @property
     def tr1(self) -> TransientData:
         if len(self.transients) > 0:
             return self.transients[0]
         return None
+
     @tr1.setter
     def tr1(self, transient: TransientData):
         if len(self.transients) == 0:
             self.transients.append(transient)
         else:
             self.transients[0] = transient
+
     @property
     def tr2(self) -> TransientData:
         if len(self.transients) > 1:
             return self.transients[1]
         return None
+
     @tr2.setter
     def tr2(self, transient: TransientData):
         if len(self.transients) == 0:
@@ -134,15 +172,17 @@ class Measurement:
             self.transients.append(transient)
         else:
             self.transients[1] = transient
+
     @property
     def tr3(self) -> TransientData:
         if len(self.transients) > 2:
             return self.transients[2]
         return None
+
     @tr3.setter
     def tr3(self, transient: TransientData):
         if len(self.transients) == 0:
-            raise ValueError("No transients loaded. Cannot set tr3: First tr1 and tr2 must be set.")    
+            raise ValueError("No transients loaded. Cannot set tr3: First tr1 and tr2 must be set.")
         if len(self.transients) == 1:
             raise ValueError("No tr2 loaded. Cannot set tr3: First tr2 must be set.")
         if len(self.transients) == 2:
@@ -168,7 +208,6 @@ class Measurement:
     #     y = np.vstack(y_parts).astype(np.float32)
     #     return X, y
 
-
     @property
     def data_stacked_transients(self) -> Tuple[np.ndarray, np.ndarray]:
         X_parts, y_parts = [], []
@@ -183,8 +222,10 @@ class Measurement:
             y = np.hstack([i[1:, None], v[1:, None]])
             X_parts.append(x)
             y_parts.append(y)
-        return np.stack(X_parts, axis=1).astype(np.float32), np.stack(y_parts, axis=1).astype(np.float32)
-    
+        return np.stack(X_parts, axis=1).astype(np.float32), np.stack(y_parts, axis=1).astype(
+            np.float32
+        )
+
     @property
     def data(self) -> np.ndarray:
         parts = []
@@ -198,7 +239,15 @@ class Measurement:
             x = np.hstack([i[:, None], v[:, None], d[:, None], dt[:, None]])
             parts.append(x)
         return np.stack(parts, axis=1).astype(np.float64)
-    
+
+    @property
+    def torch_data(self) -> torch.Tensor:
+        """Return the data as a torch tensor."""
+        data = self.data
+        # find the dtype from the numpy array
+        dtype = torch.float64 if data.dtype == np.float64 else torch.float32
+        return torch.tensor(data, dtype=dtype)
+
     @property
     def transient_idx(self) -> np.ndarray:
         """Return the transient index for each row in the data."""
@@ -224,7 +273,7 @@ class Measurement:
         D_weight=0.5,
         legend_loc: str = None,
         ignore_dt: bool = False,
-        grid: bool = False
+        grid: bool = False,
     ) -> plt.Axes:
         """Plot the loaded measurements."""
         # check the number of transients loaded
@@ -291,7 +340,10 @@ class Measurement:
         """Save measurements to a numpyz file."""
         if not filepath.parent.exists():
             raise FileNotFoundError(f"Directory {filepath.parent} does not exist.")
-        data = {f"tr{ii + 1}": (tr.time, tr.v, tr.i, tr.dt, tr.D) for ii, tr in enumerate(self.transients)}
+        data = {
+            f"tr{ii + 1}": (tr.time, tr.v, tr.i, tr.dt, tr.D)
+            for ii, tr in enumerate(self.transients)
+        }
         np.savez_compressed(filepath, **data)
 
     @classmethod
@@ -306,6 +358,26 @@ class Measurement:
                 transients.append(TransientData(time=time, v=v, i=i, dt=dt, D=D))
         return cls(transients)
 
+    @classmethod
+    def from_data(cls, data: np.ndarray) -> "Measurement":
+        """Create a Measurement instance from raw data."""
+        if data.ndim != 3 or data.shape[-1] < 4:
+            raise ValueError("Data must be a 3D array with at least 4 columns.")
+        if isinstance(data, torch.Tensor):
+            data = data.cpu().numpy()
+
+        transients = []
+        for i in range(data.shape[1]):
+            # the time vector can be calculated by cumulative sum of dt
+            tr_data = data[:, i, :]
+            time = np.cumsum(data[:, i, 3])
+            v = tr_data[:, 0]
+            i = tr_data[:, 1]
+            D = tr_data[:, 2]
+            dt = tr_data[:, 3]
+            transients.append(TransientData(time=time, v=v, i=i, dt=dt, D=D))
+        return cls(transients)
+
 
 class LoaderH5:
     def __init__(self, db_dir: Path, h5filename: str):
@@ -317,16 +389,16 @@ class LoaderH5:
         self.db_dir = db_dir
         self.h5filename = h5filename
         self.measurements_dict: Dict[str, TransientData] = {}
-    
+
     def load(self, measurement_name: str) -> TransientData:
         """Load measurements from an HDF5 file."""
         self.measurements_dict: Dict[str, TransientData] = self._load_measurements(
             measurement_name, filepath=self.db_dir / self.h5filename
         )
         for ii, k in enumerate(self.measurements_dict.keys()):
-            # check if attribute already exists, if not, create it            
+            # check if attribute already exists, if not, create it
             setattr(self, f"tr{ii + 1}", self.measurements_dict[k])
-            
+
     @property
     def M(self) -> Measurement:
         if len(self.measurements_dict) == 0:
