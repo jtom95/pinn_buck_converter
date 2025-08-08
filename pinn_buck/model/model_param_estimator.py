@@ -98,6 +98,21 @@ class BaseBuckEstimator(nn.Module, ABC):
             VF=params.VF.item(),
         )
 
+    def _logparam_name_map(self) -> list[tuple[str, str]]:
+        """
+        Returns ordered pairs  (display, stored)
+        e.g. ("L", "log_L"), ("Rload1", "log_Rloads.0"), ...
+        """
+        mapping = []
+        for disp, _ in self.logparams.iterator():
+            if disp.startswith("Rload"):
+                idx = int(disp[5:]) - 1
+                stored = f"log_Rloads.{idx}"
+            else:
+                stored = f"log_{disp}"
+            mapping.append((disp, stored))
+        return mapping
+
     # ---------------------- physics right‑hand sides -------------------
     @staticmethod
     def _di(i_k, v_k, S, p: Parameters):
@@ -192,7 +207,7 @@ class BuckParamEstimator(BaseBuckEstimator):
         # D and dt refer to the time step from n to n+1, so we need to use the same D and dt as in the forward prediction.
 
         # transform the tuple into a tensor by stacking on the last dimension
-        fwd_pred = torch.stack(fwd_pred, dim=-1)  # shape (B, T-1, 2)
-        bck_pred = torch.stack(bck_pred, dim=-1)  # shape (B, T-1, 2)
+        fwd_pred = torch.stack(fwd_pred, dim=-1)  # shape (B, T, 2)
+        bck_pred = torch.stack(bck_pred, dim=-1)  # shape (B, T, 2)
 
         return fwd_pred, bck_pred

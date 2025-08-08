@@ -114,8 +114,13 @@ def rel_tolerance_to_sigma(rel_tol: Parameters) -> Parameters:
 # %%
 from dataclasses import dataclass
 
-from pinn_buck.covariance_matrix_blocks_funcs import covariance_matrix_on_standard_residuals
-from pinn_buck.covariance_matrix_auxil import generate_residual_covariance_matrix, chol, chol_inv
+from pinn_buck.data_noise_modeling.jacobian_estimation import estimate_Jacobian
+from pinn_buck.data_noise_modeling.covariance_matrix_blocks_funcs import covariance_matrix_on_standard_residuals
+from pinn_buck.data_noise_modeling.covariance_matrix_auxil import (
+    generate_residual_covariance_matrix,
+    chol,
+    chol_inv,
+)
 
 # %%
 ## Noise Power
@@ -139,140 +144,6 @@ noise_power_10_i = sigma_noise_10_i**2
 noise_power_ADC_v = sigma_noise_ADC_v**2
 noise_power_5_v = sigma_noise_5_v**2
 noise_power_10_v = sigma_noise_10_v**2
-
-######################################
-from typing import Literal, Optional
-from torch.autograd.functional import jacobian
-from pinn_buck.model.model_param_estimator import BaseBuckEstimator
-
-
-def _build_two_row_vec(x_row_next, x_row_this):
-    # order: [i_{t+1}, v_{t+1}, D_t, Δt_t]
-    return torch.stack([x_row_next[0], x_row_next[1], x_row_this[2], x_row_this[3]])
-
-
-def estimate_bck_J_single_t(Xi, t, model, dtype=torch.float32):
-    """
-    Xi : (B,4) for one series
-    t  : time index (0 … B-2)
-    returns (2,4) Jacobian for that t
-    """
-    x_next = Xi[t + 1].detach()
-    x_this = Xi[t].detach()
-
-    vec = _build_two_row_vec(x_next, x_this).to(dtype).requires_grad_(True)  # shape (4,)
-
-    def _unpack(vec):
-        # inverse of _build_two_row_vec
-        x_next_mod = torch.stack([vec[0], vec[1], x_next[2], x_next[3]])
-        x_this_mod = torch.stack([x_this[0], x_this[1], vec[2], vec[3]])
-        Xi_mod = Xi.clone()
-        Xi_mod[t + 1] = x_next_mod
-        Xi_mod[t] = x_this_mod
-        return Xi_mod
-
-    def local_bck(v):
-        Xi_mod = _unpack(v)
-        _, bck = model(Xi_mod.unsqueeze(1))  # (B-1,1,2)
-        return bck[t].squeeze(0)  # (2,)
-
-    J = torch.autograd.functional.jacobian(local_bck, vec, create_graph=False)  # (2,4)
-    return J
-
-
-def estimate_fwd_J_single_t(Xi: torch.Tensor, t: int, model: BaseBuckEstimator, dtype=torch.float32) -> torch.Tensor:
-    """
-    Xi : (B,4) for one series
-    t  : time index (0 … B-2)
-    returns (2,4) Jacobian for that t
-    """
-    vec = Xi[t].clone().to(dtype).requires_grad_(True)
-    def local_fwd(v):
-        Xi_mod = Xi.clone()
-        Xi_mod[t] = v  # plug variable slice
-        fwd, _ = model(Xi_mod.unsqueeze(1))  # (B-1,1,2)
-        return fwd[t].squeeze(0)  # (2,)
-    J = torch.autograd.functional.jacobian(local_fwd, vec, create_graph=False)  # (2,4)
-    return J
-
-
-def estimate_Jacobian(
-    model: BaseBuckEstimator,
-    X: torch.Tensor,  # (B, T, 4)
-    *,
-    direction: Literal["forward", "backward"] = "forward",
-    by_series: bool = False,
-    number_of_samples: Optional[int] = None,
-    dtype: torch.dtype = torch.float32,
-    rng: Optional[torch.Generator] = None,
-) -> torch.Tensor:
-    """Estimate the Jacobian of the RK4 state map.
-
-    Parameters
-    ----------
-    model
-        A *trained* ``BaseBuckEstimator`` (or any compatible subclass).
-    X
-        Input tensor of shape ``(B, T, 4)`` where *B* is number of time
-        rows and *T* is number of independent series.
-    direction
-        ``"forward"`` → ∂state_{t+1}/∂inputs_t ;
-        ``"backward"`` → ∂state_t/∂[state_{t+1}, controls_t].
-    by_series
-        If *True*, return an array of shape ``(T, 2, 4)`` with one
-        Jacobian per series.  Otherwise return their mean ``(2,4)``.
-    number_of_samples
-        Maximum number of time indices *t* to sample per series.  If
-        *None* uses *all* valid indices ``0 … B-2``.
-    dtype
-        Promote *all* inputs to this dtype before computing Jacobians.
-    rng
-        Optional ``torch.Generator`` for deterministic sub‑sampling.
-
-    Returns
-    -------
-    Tensor
-        ``(2,4)`` if ``by_series=False`` else ``(T,2,4)``.
-    """
-
-    B, T, _ = X.shape
-    max_idx = B - 2  # last valid t
-    number_of_samples = max_idx + 1 if number_of_samples is None else min(number_of_samples, max_idx + 1)
-
-    if number_of_samples == max_idx + 1:
-        t_samples = torch.arange(number_of_samples, device=X.device)
-    else:
-        g = rng if rng is not None else torch.default_generator
-        t_samples = torch.randperm(max_idx + 1, generator=g, device=X.device)[:number_of_samples]
-
-    J_series: list[torch.Tensor] = []
-
-    for s in range(T):
-        Xi = X[:, s].to(dtype).detach()  # (B,4)  independent series s
-        Jsum = torch.zeros(2, 4, dtype=dtype, device=X.device)
-        # update the model so that the load resistance is one and fixed to the value of the t-th load
-        ModelClass = model.__class__
-        model_params_T = model.get_estimates()
-        # can't directly set Parameter attributes because they are NamedTuples
-        model_params_T = model_params_T._replace(
-            Rloads=[model_params_T.Rloads[s]]  # fix to the s-th load
-        )
-        model_clone = ModelClass(param_init=model_params_T)
-
-        model_clone = model_clone.to(dtype=dtype).to(device=X.device)
-        model_clone.eval()
-
-        for t in t_samples:
-            # choose the time-slice we differentiate with respect to
-            if direction == "forward":
-                Ji = estimate_fwd_J_single_t(Xi, t, model_clone, dtype=dtype)
-            elif direction == "backward":
-                Ji = estimate_bck_J_single_t(Xi, t, model_clone, dtype=dtype)
-            Jsum += Ji
-        J_series.append(Jsum / number_of_samples)
-
-    J_stack = torch.stack(J_series)  # (T,2,4)
-    return J_stack if by_series else J_stack.mean(dim=0)
 
 
 # load measurements
@@ -403,7 +274,6 @@ L_10 = chol(covariance_matrices_10)
 
 ### Build full covariance matrices from the block builders
 
-
 covariance_matrices_adc_full = make_transient_covariance_matrices(
     data_covariance=torch.tensor([noise_power_ADC_i, noise_power_ADC_v]),
     residual_covariance_block_func=covariance_matrix_on_standard_residuals,
@@ -448,8 +318,9 @@ L_10_full = chol(covariance_matrices_10_full)
 
 
 # %%
+from typing import Dict
 from pinn_buck.model.trainer import Trainer, TrainingConfigs
-
+from pinn_buck.laplace_posterior_fitting import LaplaceApproximator, LaplacePosterior
 
 set_seed(123)
 device = "cpu"
@@ -504,6 +375,7 @@ S_dict_full = {
 noisy_measurements = {}
 trained_models = {}
 trained_runs = {}
+laplace_posteriors: Dict[str, LaplacePosterior] = {}
 inverse = False
 
 # Load the data from the hdf5 file
@@ -551,21 +423,42 @@ for idx, group_number in enumerate(l_dict.keys()):
         #     loss_likelihood_function=diag_second_order_loss,  # loss function for the forward-backward pass
         #     Sigma=sig_r,  # full noise covariance matrix
         # ),
-        lbfgs_loss_fn=build_map_loss(
+        # lbfgs_loss_fn=build_map_loss(
+        #     initial_params=NOMINAL,
+        #     initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
+        #     loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
+        #     L=chol_L_full,  # full noise covariance matrix
+        # ),
+    )
+
+    trainer.fit(
+        X=X
+    )
+
+
+    ### fit a Laplace Approximator for the posterior
+    print("Fitting Laplace Posterior")
+    laplace_posterior_approx = LaplaceApproximator(
+        model=trainer.optimized_model(),
+        loss_fn=build_map_loss(
             initial_params=NOMINAL,
             initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
             loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-            L=chol_L_full,  # full noise covariance matrix
+            L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
         ),
+        device=device,
+        damping=1e-7,
     )
+    laplace_posterior = laplace_posterior_approx.fit(X)
 
-    opt_model = trainer.fit(
-        X=X
-    )
-    inverse = True  # inverse is False only for the ideal case, so we set it to True for the rest of the groups
-    trained_models[group_name] = opt_model
+
+
+    laplace_posteriors[group_name] = laplace_posterior
+    trained_models[group_name] = trainer.optimized_model()
     trained_runs[group_name] = trainer.history
 
+
+    print("Evaluating Test Losses")
     # test the loss function by evaluating the loss for the true parameters
     loss_diag_ideal = trainer.evaluate_loss(
         X=X,
@@ -626,289 +519,12 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     print("\n \n \n")
 
-# %% [markdown]
-# ## Laplace Approximation of the Posterior
-
-# %%
-from torch.autograd.functional import hessian
-from torch.func import functional_call
-from scipy.stats import norm, lognorm
-import numpy as np
-import torch
-from torch import nn
-from torch.autograd.functional import hessian
-from torch.func import functional_call
-from dataclasses import dataclass
-from typing import Callable, Dict, Any, List
-
-from scipy.stats import norm, lognorm  # --- utilities
-
-# -----------------------------------------------------------------
-# user-supplied helpers
-#   Parameters, make_log_param, reverse_log_param
-#   log_normal_prior, rel_tolerance_to_sigma
-#   likelihood_loss_triplets, _parse_data_noise_to_sigma
-# must already be imported
-# -----------------------------------------------------------------
 
 
-# -----------------------------------------------------------------#
-#   Container for the posterior                                   #
-# -----------------------------------------------------------------#
-@dataclass
-class LaplacePosterior:
-    theta_log: torch.Tensor  # MAP in log-space
-    Sigma_log: torch.Tensor  # covariance in log-space
-    theta_phys: torch.Tensor  # MAP in physical units
-    Sigma_phys: torch.Tensor  # covariance in physical units
 
-
-# -----------------------------------------------------------------#
-#   LaplaceFitter class                                            #
-# -----------------------------------------------------------------#
-class LaplaceFitter:
-    """
-    Compute a Laplace (Gaussian) approximation to the posterior of a
-    BuckParamEstimatorTriplets model.
-    """
-
-    # ------------- construction -----------------------------------
-    def __init__(
-        self,
-        model: nn.Module,
-        X: torch.Tensor,
-        y: torch.Tensor,
-        loss_fn: Callable[[nn.Module, torch.Tensor, torch.Tensor], torch.Tensor],
-        damping: float = 1e-6,
-        device: str = "cpu",
-    ):
-        self.model = model.to(device)
-        self.X = X.to(device)
-        self.y = y.to(device)
-        self.loss_fn = loss_fn
-        self.damping = damping
-        self.device = device
-
-    # ------------- helper: flatten current log-parameters ---------
-    def _flat_logparams(self) -> torch.Tensor:
-        """Return  (P,)  vector, requires_grad=True."""
-        vec = torch.cat([p.detach().clone().view(1) for p in self.model.logparams]).to(self.device)
-        vec.requires_grad_(True)
-        return vec
-
-    # ------------- build closure L(θ) ------------------------------
-    def _posterior_loss_fn(self) -> Callable[[torch.Tensor], torch.Tensor]:
-        """
-        Returns f(theta_vec) that:
-            1) rewrites model parameters,
-            2) runs the triplet forward,
-            3) computes −log posterior.
-        """
-        param_keys = [name for name, _ in self.model.named_parameters()]
-        assert len(param_keys) == len(Parameters._fields), "param count mismatch"
-
-        def loss(theta_vec: torch.Tensor) -> torch.Tensor:
-            # split flat θ into individual tensors with correct shapes
-            split = []
-            offset = 0
-            for name, p0 in self.model.named_parameters():
-                n = p0.numel()
-                split.append(theta_vec[offset : offset + n].view_as(p0))
-                offset += n
-
-            state_dict = {k: v for k, v in zip(param_keys, split)}  # new θ
-            preds = functional_call(self.model, state_dict, (self.X, self.y))
-            targets = (
-                self.X[:, :2],  # previous time step (i, v)
-                self.y,  # current time step (i, v)
-            )
-            return self.loss_fn(self.model, preds, targets)
-
-
-        return loss
-
-    # ------------- main entry -------------------------------------
-    def fit(self) -> LaplacePosterior:
-        theta_map = self._flat_logparams()
-        loss_fn = self._posterior_loss_fn()
-
-        # ----- compute MAP gradient once (optional sanity check) ---
-        loss_map = loss_fn(theta_map)
-        loss_map.backward()
-
-        # ----- Hessian --------------------------------------------
-        H = hessian(loss_fn, theta_map)
-        H = (H + H.T) * 0.5  # symmetrise
-
-        I = torch.eye(H.shape[0], device=self.device)
-        Sigma_log = torch.linalg.inv(H + self.damping * I)
-
-        # ----- convert to physical units ---------------------------
-        theta_phys = torch.tensor(
-            [getattr(self.model.get_estimates(), n) for n in Parameters._fields],
-            device=self.device,
-        )
-        J = torch.diag(theta_phys)  # ∂θ_phys/∂θ_log = diag(θ_phys)
-        Sigma_phys = J @ Sigma_log @ J.T
-
-        return LaplacePosterior(
-            theta_log=theta_map.detach(),
-            Sigma_log=Sigma_log,
-            theta_phys=theta_phys,
-            Sigma_phys=Sigma_phys,
-        )
-
-    # -------- convenience static helpers --------------------------
-    @staticmethod
-    def build_gaussian_approx(mean: np.ndarray, cov: np.ndarray):
-        std = np.sqrt(np.diag(cov))
-        return [norm(loc=m, scale=s) for m, s in zip(mean, std)]
-
-    @staticmethod
-    def build_lognormal_approx(mu_log: np.ndarray, sigma_log: np.ndarray):
-        return [lognorm(s=s, scale=np.exp(m)) for m, s in zip(mu_log, sigma_log)]
-
-    @staticmethod
-    def print_parameter_uncertainty(theta_phys, Sigma_phys):
-        std_phys = torch.sqrt(torch.diag(Sigma_phys))
-        for i, name in enumerate(Parameters._fields):
-            mean = theta_phys[i].item()
-            std = std_phys[i].item()
-            pct = 100.0 * std / mean
-            print(f"{name:8s}: {mean:.3e} ± {std:.1e} ({pct:.2f} %)")
-
-# %%
-damp = 1e-5
-
-sigma_adc_full = data_noise_to_sigma(
-    data_noise=(noise_power_ADC_i, noise_power_ADC_v),
-    jac=J_av,
-    calculate_diag_terms=True,
-    damp=damp,
-)
-
-sigma_5_full = data_noise_to_sigma(
-    data_noise=(noise_power_5_i, noise_power_5_v), jac=J_av, calculate_diag_terms=True, damp=damp
-)
-
-sigma_10_full = data_noise_to_sigma(
-    data_noise=(noise_power_10_i, noise_power_10_v),
-    jac=J_av,
-    calculate_diag_terms=True,
-    damp=damp,
-)
-
-
-print(f"Sigma matrix for ADC noise (full):\n{sigma_adc_full}")
-print(f"Sigma matrix for 5 LSB noise (full):\n{sigma_5_full}")
-print(f"Sigma matrix for 10 LSB noise (full):\n{sigma_10_full}")
-
-L_inv_adc_full = chol_inv(sigma_adc_full)
-L_inv_5_full = chol_inv(sigma_5_full)
-L_inv_10_full = chol_inv(sigma_10_full)
-
-noise_power_dict_full = {
-    1: L_inv_adc_full,  # ADC error
-    3: L_inv_5_full,  # 5 noise
-    4: L_inv_10_full,  # 10 noise
-}
-
-noise_power_dict = {
-    1: L_inv_adc,  # ADC error
-    3: L_inv_5,  # 5 noise
-    4: L_inv_10,  # 10 noise
-}
-
-# %%
-from pinn_buck.laplace_posterior_fitting import LaplaceApproximator
-
-lfits = {}
-io = LoaderH5(db_dir, h5filename)
-
-for number, power in noise_power_dict.items():
-    label = GROUP_NUMBER_DICT[number]
-    model = trained_models[label]
-
-    lapl_approx = LaplaceApproximator(
-        model=model,
-        loss_fn=make_map_loss(
-            nominal=NOMINAL,
-            sigma0=rel_tolerance_to_sigma(REL_TOL),
-            L_inv=power,  # use the noise power for the group
-        ),
-        damping=1e-6,
-    )
-    io.load(label)
-    X, y = io.M.data
-
-    X = torch.tensor(X, device=device)
-    y = torch.tensor(y, device=device)
-
-    lfit = lapl_approx.fit(X, y)
-    lfits[label] = lfit
-
+for label, lfit in laplace_posteriors.items():
     print(f"\nParameter estimates for {label}:")
     lfit.print_param_uncertainty("gaussian")
     print("\n\n")
 
-# %%
-lfits = {}
-
-for number, noise_power in noise_power_dict.items():
-    label = GROUP_NUMBER_DICT[number]
-    model = trained_models[label]
-    
-    print(f"Loading group {number}: {label}")
-    io.load(label)
-
-
-    # Train the model on the noisy measurement
-    X, y, model = load_data_to_model(
-        meas=io.M,
-        initial_guess_params=NOMINAL,
-    )
-
-    # Fit Laplace posterior using the new class
-    laplace = LaplaceFitter(
-        model=model,
-        X=X,
-        y=y,
-        loss_fn=make_map_loss(
-            nominal=NOMINAL,
-            sigma0=rel_tolerance_to_sigma(REL_TOL),
-            L_inv=noise_power,  # use the full noise power for the group
-        ),
-        damping=1e-4,
-        device="cpu",  # or "cuda" if using GPU
-    )
-    lfit = laplace.fit()
-
-    # Compute Gaussian and LogNormal approximations
-    gaussians = LaplaceFitter.build_gaussian_approx(
-        mean=lfit.theta_phys.cpu().numpy(), cov=lfit.Sigma_phys.cpu().numpy()
-    )
-
-    lognormals = LaplaceFitter.build_lognormal_approx(
-        mu_log=lfit.theta_log.cpu().numpy(),
-        sigma_log=np.sqrt(torch.diag(lfit.Sigma_log).cpu().numpy()),
-    )
-
-    # Print and store
-    print(f"\nParameter estimates for {label}:")
-    LaplaceFitter.print_parameter_uncertainty(lfit.theta_phys, lfit.Sigma_phys)
-    lfits[label] = lfit
-
-# %%
-
-
-# %%
-
-
-# %%
-
-
-# %%
-
-
-# %%
-tr.df.head()
+print("done")

@@ -114,6 +114,7 @@ def rel_tolerance_to_sigma(rel_tol: Parameters) -> Parameters:
 # %%
 from dataclasses import dataclass
 
+from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
 from pinn_buck.data_noise_modeling.jacobian_estimation import estimate_Jacobian
 from pinn_buck.data_noise_modeling.covariance_matrix_blocks_funcs import covariance_matrix_on_standard_residuals
 from pinn_buck.data_noise_modeling.covariance_matrix_auxil import (

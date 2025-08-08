@@ -64,6 +64,10 @@ class Trainer:
             f"Rloads=[{', '.join(f'{r:.3e}' for r in parameters.Rloads)}], ",
             f"Vin={parameters.Vin:.3f}, VF={parameters.VF:.3e}",
         )
+        
+    def optimized_model(self, optimizer_type: Optional[str] = None) -> BaseBuckEstimator:
+        best_parameters = self.history.get_best_parameters(optimizer_type)
+        return self.model_class(param_init=best_parameters).to(self.device)
 
     def initialize_optimizer(self, optimizer_type: str, lr: float):
         """
