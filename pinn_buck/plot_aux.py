@@ -25,13 +25,17 @@ def place_shared_legend(
     """
     axes = list(axes)
 
-    # 1) harvest handles/labels from the first axis that has them
+    # 1) collect handles/labels for all unique labels across axes
     handles, labels = [], []
+    seen_labels = set()
     for ax in axes:
         h, l = ax.get_legend_handles_labels()
-        if l:
-            handles, labels = h, l
-            break
+        for handle, label in zip(h, l):
+            if label not in seen_labels:
+                seen_labels.add(label)
+                handles.append(handle)
+                labels.append(label)
+
     if not labels:
         return  # nothing to show
 
