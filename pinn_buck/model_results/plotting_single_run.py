@@ -2,8 +2,8 @@ from typing import Iterable, List, Dict
 
 import pandas as pd
 import matplotlib.pyplot as plt
-from .config import Parameters
-from .io_model import TrainingHistory
+from ..config import Parameters
+from .history import TrainingHistory
 import numpy as np
 
 def plot_tracked_parameters(
@@ -45,15 +45,17 @@ def plot_tracked_parameters(
 
         fig = ax[0, 0].figure
         axes = ax.flatten()
+        
+    target_dict = {name: value for name, value in target.iterator()} if target else {}
 
     for i, param in enumerate(params):
         if param == "loss": 
             axes[i].plot(df[param], color=color, label=label, **kwargs)
         else: 
+            if target and param in target_dict:
+                ref_val = target_dict[param]
+                axes[i].axhline(ref_val, color="black", linestyle="-", linewidth=2.5, label="target", alpha=0.7)
             axes[i].plot(df[param], color=color, label=label if label else "estimate", **kwargs)
-            if target and hasattr(target, param):
-                ref_val = getattr(target, param)
-                axes[i].axhline(ref_val, color="red", linestyle="--", linewidth=1, label="target")
         axes[i].set_title(param)
         axes[i].set_xlabel("Iteration (per 1000 steps)")
         axes[i].grid(True)

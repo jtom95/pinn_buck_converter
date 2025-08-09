@@ -100,3 +100,25 @@ __all__ = [
     "_SCALE",
 ]
 
+# Nominals and linear-space relative tolerances
+NOMINAL = Parameters(
+    L=6.8e-4,
+    RL=0.4,
+    C=1.5e-4,
+    RC=0.25,
+    Rdson=0.25,
+    Rloads=[3.3, 10.0, 6.8],  # Rload1, Rload2, Rload3
+    Vin=46.0,
+    VF=1.1,
+)
+
+REL_TOL = Parameters(
+    L=0.50,
+    RL=0.4,
+    C=0.50,
+    RC=0.50,
+    Rdson=0.5,
+    Rloads=[0.3, 0.3, 0.3],  # Rload1, Rload2, Rload3
+    Vin=0.3,
+    VF=0.3,
+)

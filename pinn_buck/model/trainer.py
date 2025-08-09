@@ -4,7 +4,7 @@ from typing import Callable, Tuple, List, Optional
 
 import torch
 
-from ..io_model import TrainingHistory
+from ..model_results.history import TrainingHistory
 from ..config import Parameters
 
 from .model_param_estimator import BaseBuckEstimator

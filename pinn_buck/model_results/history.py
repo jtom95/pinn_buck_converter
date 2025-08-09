@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List, NamedTuple, Optional
 import pandas as pd
 
-from .config import Parameters
+from ..config import Parameters
 
 
 class TrainingHistory:

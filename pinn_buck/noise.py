@@ -3,7 +3,7 @@ import numpy as np
 from typing import List
 import matplotlib.pyplot as plt
 from pathlib import Path
-from .io_model import TrainingHistory
+from .model_results.history import TrainingHistory
 
 
 def add_noise_to_TransientData(
