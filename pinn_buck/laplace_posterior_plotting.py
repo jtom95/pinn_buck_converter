@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Literal
 from scipy.stats import lognorm, norm
 from pinn_buck.constants import ParameterConstants
 
@@ -192,7 +192,7 @@ class LaplacePosteriorPlotter:
         lfits: Dict[str, "LaplacePosterior"],  # label -> posterior
         plot_true_params: bool = True,
         skip_labels: Iterable[str] = ("ideal",),
-        style: str = "log-normal",
+        style: Literal["log-normal", "gaussian"] = "log-normal",
         ncols: int = 2,
         fig_size=(12, 14),
         show: bool = True,
