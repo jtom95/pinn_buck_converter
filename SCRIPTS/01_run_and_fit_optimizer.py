@@ -14,8 +14,7 @@ sys.path.append(str(Path.cwd()))
 
 
 from pinn_buck.config import Parameters
-from pinn_buck.config import TRUE as TRUE_PARAMS, INITIAL_GUESS as INITIAL_GUESS_PARAMS
-from pinn_buck.config import _SCALE
+from pinn_buck.constants import ParameterConstants
 
 # load measurement interface
 from pinn_buck.io import Measurement
@@ -23,7 +22,7 @@ from pinn_buck.noise import add_noise_to_Measurement
 
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
 from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator
-from pinn_buck.io_model import TrainingHistory
+from pinn_buck.model_results.history import TrainingHistory
 from pinn_buck.model.loss_function_archive import (
     build_map_loss,
     fw_bw_loss_whitened,
@@ -458,64 +457,64 @@ for idx, group_number in enumerate(l_dict.keys()):
     trained_runs[group_name] = trainer.history
 
 
-    print("Evaluating Test Losses")
-    # test the loss function by evaluating the loss for the true parameters
-    loss_diag_ideal = trainer.evaluate_loss(
-        X=X,
-        loss_fn=build_map_loss(
-            initial_params=NOMINAL,
-            initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-            loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-            L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
-            weight_prior_loss=0.
-        ),
-        parameter_guess=TRUE_PARAMS
-    )
+    # print("Evaluating Test Losses")
+    # # test the loss function by evaluating the loss for the true parameters
+    # loss_diag_ideal = trainer.evaluate_loss(
+    #     X=X,
+    #     loss_fn=build_map_loss(
+    #         initial_params=NOMINAL,
+    #         initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
+    #         loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
+    #         L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
+    #         weight_prior_loss=0.
+    #     ),
+    #     parameter_guess=TRUE_PARAMS
+    # )
 
-    loss_full_ideal = trainer.evaluate_loss(
-        X=X,
-        loss_fn=build_map_loss(
-            initial_params=NOMINAL,
-            initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-            loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-            L=chol_L_full,  # full noise covariance matrix
-            weight_prior_loss=0.
-        ),
-        parameter_guess=TRUE_PARAMS,
-    )
+    # loss_full_ideal = trainer.evaluate_loss(
+    #     X=X,
+    #     loss_fn=build_map_loss(
+    #         initial_params=NOMINAL,
+    #         initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
+    #         loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
+    #         L=chol_L_full,  # full noise covariance matrix
+    #         weight_prior_loss=0.
+    #     ),
+    #     parameter_guess=TRUE_PARAMS,
+    # )
 
-    loss_full_best_Adams = trainer.evaluate_loss(
-        X=X,
-        loss_fn=build_map_loss(
-            initial_params=NOMINAL,
-            initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-            loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-            L=chol_L_full,  # full noise covariance matrix
-            weight_prior_loss=0.
-        ),
-        parameter_guess=trainer.history.get_best_parameters('Adam')   
-    )
+    # loss_full_best_Adams = trainer.evaluate_loss(
+    #     X=X,
+    #     loss_fn=build_map_loss(
+    #         initial_params=NOMINAL,
+    #         initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
+    #         loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
+    #         L=chol_L_full,  # full noise covariance matrix
+    #         weight_prior_loss=0.
+    #     ),
+    #     parameter_guess=trainer.history.get_best_parameters('Adam')   
+    # )
 
-    loss_best_BFGS = trainer.evaluate_loss(
-        X=X,
-        loss_fn=build_map_loss(
-            initial_params=NOMINAL,
-            initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-            loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-            L=chol_L_full,  # full noise covariance matrix
-            weight_prior_loss=0.
-        ),
-        parameter_guess=trainer.history.get_best_parameters('LBFGS')   
-    )
+    # loss_best_BFGS = trainer.evaluate_loss(
+    #     X=X,
+    #     loss_fn=build_map_loss(
+    #         initial_params=NOMINAL,
+    #         initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
+    #         loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
+    #         L=chol_L_full,  # full noise covariance matrix
+    #         weight_prior_loss=0.
+    #     ),
+    #     parameter_guess=trainer.history.get_best_parameters('LBFGS')   
+    # )
 
-    print(f"True Param Loss for {group_name} (diagonal noise): {loss_diag_ideal:.6e} vs best found: {trainer.history.get_best_loss('Adam'):.6e}")
-    print(f"True Param Loss for {group_name} (full noise): {loss_full_ideal:.6e} vs best found: {trainer.history.get_best_loss('LBFGS'):.6e}")
+    # print(f"True Param Loss for {group_name} (diagonal noise): {loss_diag_ideal:.6e} vs best found: {trainer.history.get_best_loss('Adam'):.6e}")
+    # print(f"True Param Loss for {group_name} (full noise): {loss_full_ideal:.6e} vs best found: {trainer.history.get_best_loss('LBFGS'):.6e}")
 
-    TEMPLATE = "\t{idx}) {label:<40}{value:>12.6e}"
-    print("FULL NOISE", group_name + ":")
-    print(TEMPLATE.format(idx=1, label="Loss for TRUE PARAMETERS:", value=loss_full_ideal))
-    print(TEMPLATE.format(idx=3, label="Loss for best with DIAGONAL COVARIANCE:",  value=loss_full_best_Adams))
-    print(TEMPLATE.format(idx=2, label="Loss for best with FULL COVARIANCE:", value=loss_best_BFGS))
+    # TEMPLATE = "\t{idx}) {label:<40}{value:>12.6e}"
+    # print("FULL NOISE", group_name + ":")
+    # print(TEMPLATE.format(idx=1, label="Loss for TRUE PARAMETERS:", value=loss_full_ideal))
+    # print(TEMPLATE.format(idx=3, label="Loss for best with DIAGONAL COVARIANCE:",  value=loss_full_best_Adams))
+    # print(TEMPLATE.format(idx=2, label="Loss for best with FULL COVARIANCE:", value=loss_best_BFGS))
 
     print("\n \n \n")
 

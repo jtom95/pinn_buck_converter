@@ -1,20 +1,8 @@
-from typing import List, NamedTuple
+from typing import List, NamedTuple, Mapping, Union, Iterable, Tuple
 import pandas as pd
 import numpy as np
 from pathlib import Path
-
-
-# class Parameters(NamedTuple):
-#     L: float
-#     RL: float
-#     C: float
-#     RC: float
-#     Rdson: float
-#     Rload1: float
-#     Rload2: float
-#     Rload3: float
-#     Vin: float
-#     VF: float
+import json
 
 
 class Parameters(NamedTuple):
@@ -26,12 +14,11 @@ class Parameters(NamedTuple):
     Rloads: List[float] 
     Vin: float
     VF: float
-    
-    
+
     def iterator(self) -> iter:
-        # Function to iterate through the Parameters returning parameter_name, parameter_value. 
+        # Function to iterate through the Parameters returning parameter_name, parameter_value.
         # The tricky part is that Rloads is a list and the iterator should pass each of the values
-        # separately, with name: Rload1, Rload2, etc. 
+        # separately, with name: Rload1, Rload2, etc.
         for name, value in self._get_params().items():
             if name == "Rloads":
                 for i, load in enumerate(value):
@@ -55,70 +42,94 @@ class Parameters(NamedTuple):
             "VF": self.VF,
         }
 
+    def get_from_iterator_name(self, param_name: str) -> float:
+        names = self.get_all_names()
+        # check if the param_name is present in the names
+        if param_name in names:
+            return self.get_all_values()[names.index(param_name)]
+        raise ValueError(f"Parameter '{param_name}' not found.")
 
-# Nominal component values (physical units)
-TRUE = Parameters(
-    L=7.25e-4,
-    RL=0.314,
-    C=1.645e-4,
-    RC=0.201,
-    Rdson=0.221,
-    Rloads= [3.1, 10.2, 6.1],  # Rload1, Rload2, Rload3
-    Vin=48.0,
-    VF=1.0,
-)
+    def get_all_values(self) -> List[float]:
+        return [value for _, value in self.iterator()]
 
-# Initial physical guesses
-INITIAL_GUESS = Parameters(
-    L=2.0e-4,
-    RL=0.0039,
-    C=0.412e-4,
-    RC=0.159,
-    Rdson=0.122,
-    Rloads = [1.22, 1.22, 1.22],  # Rload1, Rload2, Rload3
-    Vin=8.7,
-    VF=0.1,
-)
+    @classmethod
+    def get_all_names(cls) -> List[str]:
+        return [name for name, _ in cls.build_empty().iterator()]
 
+    @classmethod
+    def build_empty(cls) -> "Parameters":
+        return cls(
+            L=0.0,
+            RL=0.0,
+            C=0.0,
+            RC=0.0,
+            Rdson=0.0,
+            Rloads=[0.0, 0.0, 0.0],
+            Vin=0.0,
+            VF=0.0,
+        )
 
-# Scaling factors local to helpers – no need for global state
-_SCALE = {
-    "L": 1e4,
-    "RL": 1e1,
-    "C": 1e4,
-    "RC": 1e1,
-    "Rdson": 1e1,
-    "Rloads": [1., 1., 1.],
-    "Vin": 1e-1,  # inverse of 1e1 used previously
-    "VF": 1.0,
-}
+    @classmethod
+    def build_from_all_names_iterator(
+        cls, iterator: Union[Mapping[str, float], Iterable[Tuple[str, float]]]
+    ) -> "Parameters":
+        """
+        Build a Parameters instance from an iterator or dict
+        mapping 'L', 'RL', ..., 'Rload1', 'Rload2', ... to values.
+        """
+        if isinstance(iterator, Mapping):
+            items = list(iterator.items())
+        else:
+            items = list(iterator)
 
-__all__ = [
-    "Parameters",
-    "TRUE",
-    "INITIAL_GUESS",
-    "_SCALE",
-]
+        # Separate Rloads and scalar parameters
+        rloads = []
+        param_dict = {}
+        for name, value in items:
+            if name.startswith("Rload"):
+                rloads.append((int(name[5:]), value))  # store index + value
+            else:
+                param_dict[name] = value
 
-# Nominals and linear-space relative tolerances
-NOMINAL = Parameters(
-    L=6.8e-4,
-    RL=0.4,
-    C=1.5e-4,
-    RC=0.25,
-    Rdson=0.25,
-    Rloads=[3.3, 10.0, 6.8],  # Rload1, Rload2, Rload3
-    Vin=46.0,
-    VF=1.1,
-)
+        # Sort Rloads by index so Rload1, Rload2, ... are in order
+        rloads_sorted = [v for _, v in sorted(rloads, key=lambda t: t[0])]
 
-REL_TOL = Parameters(
-    L=0.50,
-    RL=0.4,
-    C=0.50,
-    RC=0.50,
-    Rdson=0.5,
-    Rloads=[0.3, 0.3, 0.3],  # Rload1, Rload2, Rload3
-    Vin=0.3,
-    VF=0.3,
-)
+        return cls(
+            L=param_dict["L"],
+            RL=param_dict["RL"],
+            C=param_dict["C"],
+            RC=param_dict["RC"],
+            Rdson=param_dict["Rdson"],
+            Rloads=rloads_sorted,
+            Vin=param_dict["Vin"],
+            VF=param_dict["VF"],
+        )
+
+    def save(self, path: Union[str, Path]):
+        """
+        Save Parameters instance to JSON file.
+        """
+        path = Path(path)
+        data = dict(self._get_params())  # includes Rloads list
+        with path.open("w") as f:
+            json.dump(data, f, indent=2)
+
+    @classmethod
+    def load(cls, path: Union[str, Path]) -> "Parameters":
+        """
+        Load Parameters instance from JSON file.
+        """
+        path = Path(path)
+        with path.open("r") as f:
+            data = json.load(f)
+
+        return cls(
+            L=data["L"],
+            RL=data["RL"],
+            C=data["C"],
+            RC=data["RC"],
+            Rdson=data["Rdson"],
+            Rloads=data["Rloads"],
+            Vin=data["Vin"],
+            VF=data["VF"],
+        )

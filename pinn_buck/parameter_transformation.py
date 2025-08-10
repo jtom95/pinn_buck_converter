@@ -1,39 +1,42 @@
 import torch
-from .config import Parameters, _SCALE
+from .config import Parameters
+from .constants import ParameterConstants 
+
+
+import torch
+from typing import Optional
 
 
 def make_log_param(params: Parameters) -> Parameters:
-    """Convert physical parameters into log‑space trainable Parameters."""
+    """
+    Convert physical parameters into log-space trainable Parameters,
+    applying the scaling factors from ParameterConstants.SCALE first.
+    """
+
     def _to_log(value: float) -> torch.Tensor:
-        """Convert a physical value to log‑space."""
         return torch.log(torch.as_tensor(value, dtype=torch.float32))
 
-    return Parameters(
-        L=_to_log(params.L*_SCALE["L"]),
-        RL=_to_log(params.RL*_SCALE["RL"]),
-        C=_to_log(params.C*_SCALE["C"]),
-        RC=_to_log(params.RC*_SCALE["RC"]),
-        Rdson=_to_log(params.Rdson*_SCALE["Rdson"]),
-        Rloads= [
-            _to_log(rload * scale) for rload, scale in zip(params.Rloads, _SCALE["Rloads"])
-        ],
-        Vin=_to_log(params.Vin*_SCALE["Vin"]),
-        VF=_to_log(params.VF*_SCALE["VF"])
-    )
+    # Multiply by SCALE for each parameter in iterator order
+    scaled_items = []
+    for (name, value), (_, scale) in zip(params.iterator(), ParameterConstants.SCALE.iterator()):
+        scaled_items.append((name, _to_log(value * scale)))
+
+    return Parameters.build_from_all_names_iterator(scaled_items)
 
 
-def reverse_log_param(log_param: Parameters) -> float:
-    """Convert a log‑space parameter back to physical units."""
-    return Parameters(
-        L=torch.exp(torch.as_tensor(log_param.L, dtype=torch.float32)) / _SCALE["L"],
-        RL=torch.exp(torch.as_tensor(log_param.RL, dtype=torch.float32)) / _SCALE["RL"],
-        C=torch.exp(torch.as_tensor(log_param.C, dtype=torch.float32)) / _SCALE["C"],
-        RC=torch.exp(torch.as_tensor(log_param.RC, dtype=torch.float32)) / _SCALE["RC"],
-        Rdson=torch.exp(torch.as_tensor(log_param.Rdson, dtype=torch.float32)) / _SCALE["Rdson"],
-        Rloads=[
-            torch.exp(torch.as_tensor(rload, dtype=torch.float32)) / scale
-            for rload, scale in zip(log_param.Rloads, _SCALE["Rloads"])
-        ],
-        Vin=torch.exp(torch.as_tensor(log_param.Vin, dtype=torch.float32)) / _SCALE["Vin"],
-        VF=torch.exp(torch.as_tensor(log_param.VF, dtype=torch.float32)) / _SCALE["VF"],
-    )
+def reverse_log_param(log_param: Parameters) -> Parameters:
+    """
+    Convert log-space parameters back to physical units,
+    applying inverse scaling from ParameterConstants.SCALE.
+    """
+
+    def _to_phys(log_value: float, scale: float) -> torch.Tensor:
+        return torch.exp(torch.as_tensor(log_value, dtype=torch.float32)) / scale
+
+    unscaled_items = []
+    for (name, log_value), (_, scale) in zip(
+        log_param.iterator(), ParameterConstants.SCALE.iterator()
+    ):
+        unscaled_items.append((name, _to_phys(log_value, scale)))
+
+    return Parameters.build_from_all_names_iterator(unscaled_items)

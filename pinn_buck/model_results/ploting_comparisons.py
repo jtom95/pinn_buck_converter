@@ -10,7 +10,7 @@ from .plotting_single_run import (
     plot_final_percentage_error_multi,
 )
 from ..plot_aux import place_shared_legend
-
+from ..constants import MeasurementGroupArchive
 
 Experiment = str
 Label = str
@@ -27,16 +27,7 @@ class ResultsComparerTwo:
     is None in `from_dirs`, the class tries all labels from `group_number_dict`
     and silently skips labels with no matching CSV.
     """
-
-    DEFAULT_GROUP_NUMBER_DICT: Mapping[int, str] = {
-        0: "ideal",
-        1: "ADC_error",
-        2: "Sync Error",
-        3: "5 noise",
-        4: "10 noise",
-        5: "ADC-Sync-5noise",
-        6: "ADC-Sync-10noise",
-    }
+    DEFAULT_MEASUREMENT_GROUP = MeasurementGroupArchive.SHUAI_ORIGINAL
 
     FILE_PATTERN = "*.csv"
 
@@ -47,7 +38,7 @@ class ResultsComparerTwo:
         drop_columns: Sequence[str] = ("learning_rate",),
     ) -> None:
         self.drop_columns = tuple(drop_columns)
-        self.group_number_dict = dict(group_number_dict or self.DEFAULT_GROUP_NUMBER_DICT)
+        self.group_number_dict = dict(group_number_dict or self.DEFAULT_MEASUREMENT_GROUP)
         self.run_dictionary: RunsDict = run_dictionary or {}
 
     # ------------ Label helpers ------------
@@ -261,7 +252,7 @@ class ResultsComparerTwo:
                 ax=ax,
             )
             ax.set_title((titles[0] if titles else expA) if titles else expA)
-            ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.3), ncol=6)
+            ax.legend(loc="lower center", bbox_to_anchor=(0.5, legend_bbox_to_anchor_vertical), ncol=6)
             if suptitle:
                 fig.suptitle(suptitle, fontsize=16)
             return fig, ax

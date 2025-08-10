@@ -1,15 +1,29 @@
 from dataclasses import dataclass
-from typing import Callable, List, Literal
+from typing import Callable, List, Literal, Union
+import json
+from pathlib import Path
 
 import torch
 from torch.autograd.functional import hessian
 from torch.func import functional_call
 from scipy.stats import norm, lognorm
+from scipy.special import erf
 import numpy as np
 
 from .model.loss_function_configs import MAPLossFunction
 from .config import Parameters
+from .constants import ParameterConstants
 from .model.model_param_estimator import BaseBuckEstimator
+
+
+def _sigma_to_quantiles(n_sigma: float):
+    """
+    Convert a ±n_sigma interval into lower/upper quantiles.
+    For example, n_sigma=1 → (0.1587, 0.8413) for a Normal.
+    """
+    alpha = 0.5 * erf(n_sigma / np.sqrt(2))
+    return 0.5 - alpha, 0.5 + alpha
+
 
 @dataclass
 class LaplacePosterior:
@@ -30,10 +44,52 @@ class LaplacePosterior:
     # ----------------------------------------------------------------
     @property
     def lognormal_approx(self) -> List:
-        """Univariate LogNormal for each parameter (because θ = exp(log θ))."""
-        mu = self.theta_log.cpu().numpy()
-        var = np.diag(self.Sigma_log.cpu().numpy())
-        return [lognorm(s=np.sqrt(v), scale=np.exp(m)) for m, v in zip(mu, var)]
+        """
+        Univariate LogNormal for each parameter in *physical units*,
+        correcting for the model's internal scaling.
+
+        Notes
+        -----
+        - The input `theta_log` and `Sigma_log` describe a Gaussian distribution
+        in log-space for the *scaled* parameters log(param * scale). This method
+        first subtracts `log(scale)` to recover the log-distribution of the true
+        physical parameters.
+
+        - The returned `scipy.stats.lognorm` objects use:
+            s     = σ_log   (standard deviation in log-space)
+            scale = exp(μ_log_phys)  (this is the median in physical space)
+
+        - For a lognormal X ~ LogNormal(μ, σ²):
+            * Median = exp(μ)  → 50% quantile on each side
+            * Mean   = exp(μ + σ² / 2)  → larger than the median unless σ² = 0
+            * Mode   = exp(μ - σ²)      → smaller than both mean and median
+
+        The upward shift of the mean relative to the median arises from the
+        moment-generating function (MGF) of the underlying Gaussian, evaluated
+        at t=1:
+            M_X(t) = exp(μ t + ½ σ² t²)  ⇒  E[X] = M_X(1) = exp(μ + ½ σ²)
+
+        This skew explains why posterior summaries in lognormal space will
+        generally differ from Gaussian summaries in physical space.
+        """
+        
+        # 1) scaled log mean/cov from Laplace (these correspond to log(param * scale))
+        mu_scaled = self.theta_log.cpu().numpy()
+        var_scaled = np.diag(self.Sigma_log.cpu().numpy())
+
+        # 2) build name->scale map from the Parameters-based SCALE using the same iterator()
+        scale_map = {name: val for name, val in ParameterConstants.SCALE.iterator()}
+        # align scales to the LaplacePosterior ordering
+        scales = np.array([scale_map[name] for name in self.param_names], dtype=np.float64)
+
+        # 3) unscale in log-space:
+        # Currently the parameters are log(param * scale), in order to reobtain the original params:
+        # log(param) = log([param * scale]/scale) = log([param*scale]) - log(scale)
+        mu_phys = mu_scaled - np.log(scales)
+        var_phys = var_scaled  # unchanged when subtracting a constant
+
+        # 4) scipy's lognorm: s = sigma, scale = exp(mu)
+        return [lognorm(s=np.sqrt(v), scale=np.exp(m)) for m, v in zip(mu_phys, var_phys)]
 
     # ----------------------------------------------------------------
     def print_param_uncertainty(
@@ -54,34 +110,70 @@ class LaplacePosterior:
             Width of the interval expressed in Normal-standard-deviation units
             (z-score). 1 → 68.27 %; 2 → 95.45 %; 3 → 99.73 %.
         """
+
+        lower_q, upper_q = _sigma_to_quantiles(n_sigma)
+
         if distribution_type == "gaussian":
-            mean = self.theta_phys.cpu().numpy()
-            std = np.sqrt(np.diag(self.Sigma_phys.cpu().numpy()))
-            for name, m, s in zip(self.param_names, mean, std):
-                s = 0.0 if np.isnan(s) else s
-                wid = n_sigma * s
-                pct = 100.0 * wid / m if m != 0 else 0.0
-                print(f"{name:10s}: {m:.3e}  ±{wid:.1e}  ({pct:.2f} %)")
+            dists = self.gaussian_approx
+            for name, dist in zip(self.param_names, dists):
+                mean = dist.mean()
+                wid = mean - dist.ppf(lower_q)  # or just n_sigma * dist.std()
+                pct = 100.0 * wid / mean if mean != 0 else 0.0
+                print(f"{name:10s}: {mean:.3e}  ±{wid:.1e}  ({pct:.2f} %)")
 
         elif distribution_type == "lognormal":
-            mu = self.theta_log.cpu().numpy()
-            sg = np.sqrt(np.diag(self.Sigma_log.cpu().numpy()))
-            for name, m, s in zip(self.param_names, mu, sg):
-                s = 0.0 if np.isnan(s) else s
-                mean_phys = np.exp(m + 0.5 * s**2)
-                lower = np.exp(m - n_sigma * s)
-                upper = np.exp(m + n_sigma * s)
-                minus = mean_phys - lower
-                plus = upper - mean_phys
-                pct_minus = 100.0 * minus / mean_phys
-                pct_plus = 100.0 * plus / mean_phys
+            dists = self.lognormal_approx
+            for name, dist in zip(self.param_names, dists):
+                mean = dist.mean()
+                lower = dist.ppf(lower_q)
+                upper = dist.ppf(upper_q)
+                minus = mean - lower
+                plus = upper - mean
+                pct_minus = 100.0 * minus / mean if mean != 0 else 0.0
+                pct_plus = 100.0 * plus / mean if mean != 0 else 0.0
                 print(
-                    f"{name:10s}: {mean_phys:.3e}  "
+                    f"{name:10s}: {mean:.3e}  "
                     f"-{minus:.1e}/+{plus:.1e}  "
                     f"(-{pct_minus:.2f} %, +{pct_plus:.2f} %)"
                 )
+
         else:
             raise ValueError("distribution_type must be 'gaussian' or 'lognormal'")
+
+    def save(self, path: Union[str, Path]) -> None:
+        """
+        Save LaplacePosterior to a JSON file.
+        Tensors are stored as nested lists (CPU, float64).
+        """
+        path = Path(path)
+        data = {
+            "theta_log": self.theta_log.detach().cpu().numpy().tolist(),
+            "Sigma_log": self.Sigma_log.detach().cpu().numpy().tolist(),
+            "theta_phys": self.theta_phys.detach().cpu().numpy().tolist(),
+            "Sigma_phys": self.Sigma_phys.detach().cpu().numpy().tolist(),
+            "param_names": list(self.param_names),
+        }
+        with path.open("w") as f:
+            json.dump(data, f, indent=2)
+
+    @classmethod
+    def load(
+        cls, path: Union[str, Path], device: Union[str, torch.device] = "cpu"
+    ) -> "LaplacePosterior":
+        """
+        Load LaplacePosterior from a JSON file.
+        """
+        path = Path(path)
+        with path.open("r") as f:
+            data = json.load(f)
+
+        return cls(
+            theta_log=torch.tensor(data["theta_log"], dtype=torch.float32, device=device),
+            Sigma_log=torch.tensor(data["Sigma_log"], dtype=torch.float32, device=device),
+            theta_phys=torch.tensor(data["theta_phys"], dtype=torch.float32, device=device),
+            Sigma_phys=torch.tensor(data["Sigma_phys"], dtype=torch.float32, device=device),
+            param_names=data["param_names"],
+        )
 
 
 class LaplaceApproximator:

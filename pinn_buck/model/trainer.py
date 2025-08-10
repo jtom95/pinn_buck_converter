@@ -13,8 +13,6 @@ from .loss_function_configs import MAPLossFunction
 
 @dataclass
 class TrainingConfigs:
-    savename: str = "saved_run"
-    out_dir: Path = Path(".")
     device: str = "cpu"
     patience: int = 5_000
     lr_adam: float = 1e-3
@@ -305,16 +303,3 @@ class Trainer:
 
         # After training, we can save the history of losses and parameters
         print("Training concluded.")
-        self.print_summary()
-
-    def save_history_to_csv(self):
-        # generate the output directory if it doesn't exist
-        self.cfg.out_dir.mkdir(parents=True, exist_ok=True)
-
-        # if savename doesn't end with .csv, add it
-        savename = self.cfg.savename
-
-        if not savename.endswith(".csv"):
-            savename += ".csv"
-        self.history.save_to_csv(self.cfg.out_dir / savename)
-        print("Saved history to CSV file:", self.cfg.out_dir / savename)

@@ -66,9 +66,11 @@ class TrainingHistory:
         """Save the TrainingHistory to a CSV file."""
         # check if file path is valid
         if not csv_path.parent.exists():
-            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            raise FileNotFoundError(f"Output directory does not exist: {csv_path.parent}")
         if not csv_path.suffix == ".csv":
-            raise ValueError(f"Expected a CSV file path, got {csv_path}")
+            raise Warning(f"File path {csv_path} does not end with .csv, saving as CSV anyway.")
+        csv_path = csv_path.with_suffix(".csv")
+
         # save the DataFrame to CSV
         self.df.to_csv(csv_path, index=False)
 
