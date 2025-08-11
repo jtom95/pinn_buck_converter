@@ -1,7 +1,0 @@
-buckSimulation_0: mean:0.09, L: 0.03, RL: 0.05, C: 0.01, RC: 0.03, Rdson: 0.05, Rload1: 0.00, Rload2: 0.00, Rload3: 0.00, Vin: 0.02, VF: 0.71
-buckSimulation_0: mean:34405.15, L: 245439.76, RL: 11818.26, C: 1983.24, RC: 3602.19, Rdson: 79431.61, Rload1: 99.98, Rload2: 507.83, Rload3: 43.39, Vin: 1025.28, VF: 99.98
-buckSimulation_0: mean:223678.80, L: 2226637.72, RL: 132.32, C: 1352.73, RC: 5517.95, Rdson: 2703.09, Rload1: 99.81, Rload2: 50.27, Rload3: 94.38, Vin: 99.83, VF: 99.93
-buckSimulation_0: mean:nan, L: nan, RL: nan, C: nan, RC: nan, Rdson: nan, Rload1: nan, Rload2: nan, Rload3: nan, Vin: nan, VF: nan
-buckSimulation_0: mean:0.07, L: 0.02, RL: 0.01, C: 0.00, RC: 0.03, Rdson: 0.05, Rload1: 0.00, Rload2: 0.00, Rload3: 0.00, Vin: 0.01, VF: 0.55
-buckSimulation_0: mean:23.43, L: 0.02, RL: 0.01, C: 0.00, RC: 0.03, Rdson: 0.05, Rload1: 69.61, Rload2: 67.21, Rload3: 96.77, Vin: 0.01, VF: 0.55
-buckSimulation_0: mean:0.07, L: 0.02, RL: 0.01, C: 0.00, RC: 0.03, Rdson: 0.05, Rload1: 0.00, Rload2: 0.00, Rload3: 0.00, Vin: 0.01, VF: 0.55
