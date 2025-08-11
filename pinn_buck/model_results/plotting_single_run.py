@@ -1,13 +1,15 @@
-from typing import Iterable, List, Dict
+from typing import Iterable, List, Dict, Union
 
 import pandas as pd
 import matplotlib.pyplot as plt
 from ..config import Parameters
 from .history import TrainingHistory
 import numpy as np
+from matplotlib.transforms import blended_transform_factory as blend
+
 
 def plot_tracked_parameters(
-    df: pd.DataFrame,
+    history: TrainingHistory,
     figsize=(12, 8),
     skip_loss: bool = False,
     target: Parameters = None,
@@ -15,71 +17,160 @@ def plot_tracked_parameters(
     label: str = None,
     color: str = "black",
     ax: Iterable[plt.Axes] = None,
-    **kwargs
+    optimizer_alpha: float = 0.06,  # shading strength
+    optimizer_line_alpha: float = 0.4,
+    **kwargs,
 ):
     """
-    Plot tracked physical parameters and optionally loss over iterations.
-
-    Args:
-        df (pd.DataFrame): DataFrame with loss and parameter columns.
-        figsize (tuple): Figure size for the plot grid.
-        skip_loss (bool): Whether to skip plotting the loss curve.
-        target (Parameters, optional): If provided, plots horizontal reference lines for nominal values.
+    Plot tracked physical parameters and (optionally) loss over entries.
+    Ignores any 'epoch' resets; x-axis is simply the entry index.
+    If 'optimizer' exists, shades segments and annotates optimizer names.
     """
-    if isinstance(df, TrainingHistory):
-        df = df.df
-    
-    params = [col for col in df.columns if col != "loss"] if skip_loss else df.columns
-    n = len(params)
+    # Split the history into: extra columns (loss/optimizer/lr/epoch/etc.) and iterator (per-parameter)
+    drop_condition = lambda c: (c in Parameters._fields) or ("Rload" in c)
+    df_extra = history.df.drop(columns=[c for c in history.df.columns if drop_condition(c)])
+    df_iter = history.df_from_iterator()  # per-parameter columns in display names
+
+    # Decide which extra columns to plot
+    has_opt = "optimizer" in df_extra.columns
+    has_lr = "learning_rate" in df_extra.columns
+
+    core_cols = list(df_extra.columns)
+    for c in ["optimizer", "epoch"]:  # we ignore epoch entirely
+        if c in core_cols:
+            core_cols.remove(c)
+    if skip_loss and "loss" in core_cols:
+        core_cols.remove("loss")
+
+    # Join with iterator columns (keeps only rows common to both)
+    df = df_extra[core_cols].join(df_iter, how="inner")
+
+    # x-axis = simple entry index (0..N-1)
+    N = len(df)
+    x = np.arange(N, dtype=float)
+
+    # Get optimizer labels aligned to df rows (if present)
+    if has_opt:
+        opt = history.df.loc[df.index, "optimizer"].to_numpy()
+    else:
+        opt = None
+
+    # Build axes grid
+    n = len(df.columns)
     ncols = 4
     nrows = (n + ncols - 1) // ncols
-
     if ax is None:
-        fig, ax = plt.subplots(nrows, ncols, figsize=figsize, constrained_layout=True)
-        axes = ax.flatten()
-    else: 
-        # check the axes have the correct number of subplots
+        fig, ax = plt.subplots(nrows, ncols, figsize=figsize, constrained_layout=True, sharex=True)
+        axes = np.array(ax).reshape(nrows, ncols).flatten()
+    else:
         ax = np.asarray(ax)
         if ax.shape != (nrows, ncols):
             raise ValueError(f"Expected axes shape {(nrows, ncols)}, got {ax.shape}")
-
         fig = ax[0, 0].figure
         axes = ax.flatten()
-        
+
+    # Targets
     target_dict = {name: value for name, value in target.iterator()} if target else {}
 
-    for i, param in enumerate(params):
-        if param == "loss": 
-            axes[i].plot(df[param], color=color, label=label, **kwargs)
-        else: 
-            if target and param in target_dict:
-                ref_val = target_dict[param]
-                axes[i].axhline(ref_val, color="black", linestyle="-", linewidth=2.5, label="target", alpha=0.7)
-            axes[i].plot(df[param], color=color, label=label if label else "estimate", **kwargs)
-        axes[i].set_title(param)
-        axes[i].set_xlabel("Iteration (per 1000 steps)")
-        axes[i].grid(True)
-        axes[i].legend()
+    # Helper to shade optimizer segments on a given axis
+    def draw_optimizer_bands(ax_):
+        if opt is None or len(opt) == 0:
+            return
+        starts = np.r_[0, 1 + np.flatnonzero(opt[1:] != opt[:-1])]
+        ends = np.r_[starts[1:], len(opt)]
+        names = [opt[s] for s in starts]
 
-    # if learning rate is in the DataFrame, plot it
-    if "learning_rate" in df.columns:
-        # on the last axis, plot the learning rate
-        axes[-1].plot(df["learning_rate"], label=label, color=color)
-        axes[-1].set_title("Learning Rate")
-        axes[-1].set_xlabel("Iteration (per 1000 steps)")
-        axes[-1].legend()
-        i += 1 # avoid removing the last axis
+        palette = plt.cm.tab20.colors
+        trans = blend(ax_.transData, ax_.transAxes)  # x in data; y in axes
 
-    if logloss and "loss" in df.columns:
-        axes[0].set_yscale("log")
-        axes[0].set_ylabel("Loss (log scale)")
-        axes[0].legend()
+        for k, (s, e) in enumerate(zip(starts, ends)):
+            x0, x1 = float(s), float(e - 1 if e > s else s)
+            if x1 == x0:
+                x1 = x0 + 1.0  # minimal width for single-point segments
 
-    for j in range(i + 1, len(axes)):
+            # band under the curves
+            ax_.axvspan(
+                x0,
+                x1,
+                facecolor=palette[k % len(palette)],
+                alpha=optimizer_alpha,
+                linewidth=0.0,
+                zorder=0,
+            )
+
+            # vertical separator at the start (except first)
+            if s != 0:
+                ax_.axvline(
+                    x0,
+                    color=palette[k % len(palette)],
+                    alpha=optimizer_line_alpha,
+                    linestyle="--",
+                    linewidth=1.0,
+                    zorder=1,
+                )
+
+            # label inside the band (near top)
+            xc = 0.5 * (x0 + x1)
+            ax_.text(
+                xc,
+                0.92,
+                names[k],
+                rotation=90,
+                va="top",
+                ha="center",
+                fontsize=9,
+                color="k",
+                alpha=0.85,
+                transform=trans,
+                zorder=2,
+            )
+
+    # Plot each series
+    for i, col in enumerate(df.columns):
+        ax_i = axes[i]
+        y = df[col].to_numpy()
+
+        if col == "loss":
+            ax_i.plot(x, y, color=color, label=label or "loss", **kwargs)
+            if logloss:
+                ax_i.set_yscale("log")
+                ax_i.set_ylabel("Loss (log scale)")
+        else:
+            if target and col in target_dict:
+                ax_i.axhline(target_dict[col], color="black", lw=2.0, alpha=0.7, label="target")
+            ax_i.plot(x, y, color=color, label=label or "estimate", **kwargs)
+
+        ax_i.set_title(col)
+        ax_i.set_xlabel("Entry")
+        ax_i.grid(True, alpha=0.25)
+        ax_i.legend(loc="best")
+
+        draw_optimizer_bands(ax_i)
+
+    # Learning rate panel, if there’s room
+    last_used = len(df.columns)
+    if has_lr and last_used < len(axes):
+        ax_lr = axes[last_used]
+        ax_lr.plot(
+            x,
+            history.df.loc[df.index, "learning_rate"].to_numpy(),
+            color=color,
+            label=label or "lr",
+        )
+        ax_lr.set_title("Learning Rate")
+        ax_lr.set_xlabel("Entry")
+        ax_lr.grid(True, alpha=0.25)
+        ax_lr.legend(loc="best")
+        draw_optimizer_bands(ax_lr)
+        last_used += 1
+
+
+    # Hide any empty subplots
+    for j in range(last_used, len(axes)):
         axes[j].axis("off")
 
     fig.suptitle("Tracked Parameters over Training", fontsize=16)
-    return fig, ax  # return only the used axes
+    return fig, ax
 
 
 # plot the percentage error of the parameters
@@ -114,7 +205,6 @@ def plot_percentage_error_evolution(df: pd.DataFrame, target: Parameters):
     plt.title("Percentage Error of Parameters")
     plt.legend()
     plt.grid(True)
-    
 
 
 def plot_final_percentage_error(
@@ -185,10 +275,11 @@ def plot_final_percentage_error_multi(
     rows: Dict[str, Dict[str, float]] = {}  # {param → {run_label → error}}
 
     for run_label, tr in runs.items():
-        bp = tr.best_parameters if select_lowest_loss else tr.df.iloc[-1]  # get best parameters or last row
-        for name in Parameters._fields:
-            if name in tr.df.columns and name not in skip_params:
-                err = abs(getattr(bp, name) / getattr(target, name) - 1.0) * 100.0
+        best_parameters = tr.get_best_parameters() if select_lowest_loss else tr.get_latest_parameters()  # get best parameters or last row
+        for name, value in best_parameters.iterator():
+            if name in tr.df_from_iterator() and name not in skip_params:
+                target_value = target.get_from_iterator_name(name)
+                err = abs(value / target_value - 1.0) * 100.0
                 rows.setdefault(name, {})[run_label] = err
 
     # turn into (rows = parameters) × (cols = run labels) dataframe

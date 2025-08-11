@@ -159,6 +159,12 @@ class ResultsComparerTwo:
         labels: Optional[Iterable[Union[int, str]]] = None,
         **kwargs,
     ) -> "ResultsComparerTwo":
+
+        # check the directory existence
+        for exp, d in exp_dirs.items():
+            if not Path(d).is_dir():
+                raise FileNotFoundError(f"Directory not found: {d}")
+
         tmp = cls(**kwargs)
         if labels is None:
             resolved = list(tmp.group_number_dict.values())
@@ -378,7 +384,7 @@ class ResultsComparerTwo:
             if lbl not in runs:
                 raise KeyError(f"Label '{lbl}' not found in experiment '{prefix}'.")
             return plot_tracked_parameters(
-                df=runs[lbl],
+                history=runs[lbl],
                 target=(target if use_target else None),
                 label=f"{prefix}{lbl}",
                 ax=ax,

@@ -62,7 +62,7 @@ class Trainer:
             f"Rloads=[{', '.join(f'{r:.3e}' for r in parameters.Rloads)}], ",
             f"Vin={parameters.Vin:.3f}, VF={parameters.VF:.3e}",
         )
-        
+
     def optimized_model(self, optimizer_type: Optional[str] = None) -> BaseBuckEstimator:
         best_parameters = self.history.get_best_parameters(optimizer_type)
         return self.model_class(param_init=best_parameters).to(self.device)
@@ -143,7 +143,7 @@ class Trainer:
         print(f"[LBFGS] best ", end="")
         self.print_parameters(self.history.get_best_parameters("LBFGS"))
 
-    def adam_fit(self, X: torch.Tensor, targets: Tuple[torch.Tensor, torch.Tensor]):
+    def adam_fit(self, X: torch.Tensor, targets: Tuple[torch.Tensor, torch.Tensor], evaluate_initial_loss: bool=True):
         """
         Fit the model using Adam optimizer.
 
@@ -152,6 +152,14 @@ class Trainer:
             targets (Tuple[torch.Tensor, torch.Tensor]): Tuple of tensors containing the forward and backward targets.
         """
         opt = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr_adam)
+
+        if evaluate_initial_loss:
+            # Evaluate the initial loss before starting the LBFGS optimization
+            initial_loss = self.evaluate_loss(
+                X=X, targets=targets, loss_fn=self.loss_fn
+            )
+            self.log_results(0, initial_loss, self.model.get_estimates(), opt)
+
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             opt,
             mode="min",
@@ -160,6 +168,7 @@ class Trainer:
         )
 
         for it in range(1, self.cfg.epochs_adam + 1):
+            self.model.train()
             opt.zero_grad()  # reset gradients
 
             preds = self.model(X)  # forward pass
@@ -213,10 +222,19 @@ class Trainer:
         else:
             model_ = self.model.to(self.device)
 
-        model_.eval()
-        with torch.no_grad():
-            preds = model_(X_)
-            loss = loss_fn(parameter_guess=model_.logparams, preds=preds, targets=targets)
+        # Remember and restore the original mode
+        was_training = model_.training
+        try:
+            model_.eval()
+            with torch.no_grad():
+                preds = model_(X_)
+                loss = loss_fn(parameter_guess=model_.logparams, preds=preds, targets=targets)
+        finally:
+            # Restore original mode
+            if was_training:
+                model_.train()
+            else:
+                model_.eval()
 
         return loss
 
@@ -253,6 +271,7 @@ class Trainer:
         #  Closure with finite checks
         # ------------------------------------------------------------------
         def closure():
+            self.model.train()
             lbfgs_optim.zero_grad()
 
             pred = self.model(X)

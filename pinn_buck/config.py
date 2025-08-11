@@ -104,6 +104,15 @@ class Parameters(NamedTuple):
             Vin=param_dict["Vin"],
             VF=param_dict["VF"],
         )
+        
+    @classmethod
+    def build_from_field_iterator(cls, m: Union[Mapping[str, float], Iterable[Tuple[str, float]]]) -> "Parameters":
+        names = []
+        values = []
+        for name, value in m.items():
+            names.append(name)
+            values.append(value)
+        return cls(*values)
 
     def save(self, path: Union[str, Path]):
         """

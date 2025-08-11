@@ -327,8 +327,6 @@ out_dir = Path.cwd() / "RESULTS" / "Bayesian" / "FullSigma_MAP1"
 
 
 run_configs = TrainingConfigs(
-    savename="adam_run.csv",
-    out_dir=out_dir,
     lr_adam=1e-3,
     epochs_adam=10_000,
     device="cpu",
@@ -391,7 +389,6 @@ for idx, group_number in enumerate(l_dict.keys()):
     # Store the measurement in a dictionary
     noisy_measurements[group_name] = io.M
 
-    run_configs.savename = f"noisy_run_{group_name}.csv"
 
     print(f"\n{'-'*50}")
     print(f"{idx}) Training with {group_name} data")
