@@ -6,6 +6,49 @@ from ..parameter_transformation import make_log_param
 
 
 ## Likelihood Loss Functions
+def only_fw_loss_whitened(
+    fwd_pred: torch.Tensor,
+    bck_pred: torch.Tensor,
+    fwd_target: torch.Tensor,
+    bck_target: torch.Tensor,
+    L: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Compute r^T Σ^{-1} r via Cholesky whitening: r -> z = L^{-1} r.
+    """
+    fwd_residual = fwd_pred - fwd_target  # shape (B, T, 2)
+    # bck_residual = bck_pred - bck_target  # shape (B, T, 2)
+
+    # L has a Tx4x4 shape
+    L2b2 = L[:, :2, :2]
+
+    r = fwd_residual  # (B, T, 2)
+
+    if L2b2.dim() == 2:
+        # if the L tensor has 2 dimensions, it is a single covariance matrix
+        r_flat = r.view(-1, 2)  # flatten to (B*T, 2)
+        z = torch.linalg.solve_triangular(L2b2, r_flat.T, upper=False).T  # shape [N, 2]
+        return 0.5 * z.square().sum()
+
+    # if the L tensor has 3 dimensions, the first dimension is the number of transients
+    if L2b2.dim() != 3 or L2b2.shape[1:] != (2, 2):
+        raise ValueError("L must have shape (2,2) or (T,2,2)")
+
+    # --- per‑transient covariances ------------------------------------------------
+    # r : (B, T, 2)  → permute to (T, B, 2) so transient is leading batch dim
+    r_tb2 = r.permute(1, 0, 2)  # (T, B, 2)
+    # RHS for solve_triangular must be (T, 2, B)
+    z = torch.linalg.solve_triangular(L2b2, r_tb2.transpose(1, 2), upper=False)  # (T, 2, B)
+
+    ## IMPORTANT NOTE:
+    # Note that using solve_triangular is much more stable for the gradients and optimization
+    # compared to z = torch.matmul(r, L_inv.T)  # whitening: (B, 4)
+    # even if L_inv = chol_inv(L) is used, it is still more stable to use solve_triangular
+    # because it avoids the numerical issues with the inverse of the Cholesky factor.
+    return 0.5 * z.square().sum()
+
+
+## Likelihood Loss Functions
 def fw_bw_loss_whitened(
     fwd_pred: torch.Tensor,
     bck_pred: torch.Tensor,
@@ -36,6 +79,42 @@ def fw_bw_loss_whitened(
     r_tb4 = r.permute(1, 0, 2)  # (T, B, 4)
     # RHS for solve_triangular must be (T, 4, B)
     z = torch.linalg.solve_triangular(L, r_tb4.transpose(1, 2), upper=False)  # (T, 4, B)
+
+    ## IMPORTANT NOTE:
+    # Note that using solve_triangular is much more stable for the gradients and optimization
+    # compared to z = torch.matmul(r, L_inv.T)  # whitening: (B, 4)
+    # even if L_inv = chol_inv(L) is used, it is still more stable to use solve_triangular
+    # because it avoids the numerical issues with the inverse of the Cholesky factor.
+    return 0.5 * z.square().sum()
+
+
+def loss_whitened_r_delta(
+    fwd_pred: torch.Tensor,
+    bck_pred: torch.Tensor,
+    fwd_target: torch.Tensor,
+    bck_target: torch.Tensor,
+    L: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Compute r^T Σ^{-1} r via Cholesky whitening: r -> z = L^{-1} r.
+    """
+    r = (fwd_pred - bck_pred) - (fwd_target - bck_target)
+
+    if L.dim() == 2:
+        # if the L tensor has 2 dimensions, it is a single covariance matrix
+        r_flat = r.view(-1, 2)  # flatten to (B*T, 2)
+        z = torch.linalg.solve_triangular(L, r_flat.T, upper=False).T  # shape [N, 2]
+        return 0.5 * z.square().sum()
+
+    # if the L tensor has 3 dimensions, the first dimension is the number of transients
+    if L.dim() != 3 or L.shape[1:] != (2, 2):
+        raise ValueError("L must have shape (2,2) or (T,2,2)")
+
+    # --- per‑transient covariances ------------------------------------------------
+    # r : (B, T, 2)  → permute to (T, B, 2) so transient is leading batch dim
+    r_tb2 = r.permute(1, 0, 2)  # (T, B, 2)
+    # RHS for solve_triangular must be (T, 2, B)
+    z = torch.linalg.solve_triangular(L, r_tb2.transpose(1, 2), upper=False)  # (T, 2, B)
 
     ## IMPORTANT NOTE:
     # Note that using solve_triangular is much more stable for the gradients and optimization

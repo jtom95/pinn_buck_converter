@@ -22,7 +22,7 @@ def generate_residual_covariance_matrix(
 ) -> torch.Tensor:
 
     # 1) Wrap the user's function with the ABC factory – this *only* checks
-    #    “does the function return a dict with the four expected keys?”
+    #    “does the function return a dict with the four expected keys?
     block_builder: CovarianceMatrixBuilder = (
         CovarianceMatrixBuilderFactory.wrap_covariance_matrix_builder(
             residual_covariance_block_func
@@ -34,6 +34,10 @@ def generate_residual_covariance_matrix(
 
     # 3) Assemble the covariance matrix blocks
     blocks: SigmaBlocksDict = block_builder(data_covariance_matrix, **kwargs)
+    
+    if isinstance(blocks, torch.Tensor):
+        return _ensure_positive_definite(blocks, damp=damp)
+
     Sigma = torch.zeros((4, 4), device=data_covariance_matrix.device)
     Sigma[:2, :2] = blocks["fwfw"]
     Sigma[2:, 2:] = blocks["bwbw"]

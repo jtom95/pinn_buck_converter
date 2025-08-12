@@ -44,9 +44,15 @@ class CovarianceMatrixBuilderFactory:
 
             def __call__(
                 self, data_2x2_covariance_matrix: torch.Tensor, **kwargs
-            ) -> SigmaBlocksDict:
+            ) -> Union[SigmaBlocksDict, torch.Tensor]:
                 output = self.func(data_2x2_covariance_matrix, **kwargs)
                 # check that output is a dictionary with the expected keys
+                if isinstance(output, torch.Tensor):
+                    # check that it is a 2x2 matrix
+                    if output.shape != (2, 2):
+                        raise ValueError("Output must be a 2x2 tensor.")
+                    return output
+                
                 if not isinstance(output, dict) or not all(key in output for key in ["fwfw", "fwbw", "bwfw", "bwbw"]):
                     raise ValueError("Output must be a dictionary with keys: 'fwfw', 'fwbw', 'bwfw', 'bwbw'")
                 return SigmaBlocksDict(
