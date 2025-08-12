@@ -3,15 +3,14 @@ import torch
 from abc import ABC, abstractmethod
 
 from ..config import Parameters
+from .residuals import ResidualFunc
 
 class LikelihoodLossFunction(ABC):
     @abstractmethod
     def __call__(
         self,
-        fwd_pred: torch.Tensor,
-        bck_pred: torch.Tensor,
-        fwd_target: torch.Tensor,
-        bck_target: torch.Tensor,
+        pred: torch.Tensor,
+        target: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -54,17 +53,13 @@ class LossFunctionFactory:
         class LikelihoodLossFunctionImpl(LikelihoodLossFunction):
             def __call__(
                 self,
-                fwd_pred: torch.Tensor,
-                bck_pred: torch.Tensor,
-                fwd_target: torch.Tensor,
-                bck_target: torch.Tensor,
+                pred: torch.Tensor,
+                target: torch.Tensor,
                 **kwargs,
             ) -> torch.Tensor:
                 return likelihood_func(
-                    fwd_pred=fwd_pred,
-                    bck_pred=bck_pred,
-                    fwd_target=fwd_target,
-                    bck_target=bck_target,
+                    pred=pred,
+                    target=target,
                     **kwargs,
                 )
 
@@ -92,10 +87,9 @@ class LossFunctionFactory:
             def __call__(
                 self,
                 parameter_guess: Parameters,
-                preds: Tuple[torch.Tensor, torch.Tensor],
-                targets: Tuple[torch.Tensor, torch.Tensor],
+                preds: torch.Tensor,
+                targets: torch.Tensor,
             ) -> torch.Tensor:
                 return map_loss_func(parameter_guess, preds, targets)
-
         return MAPLossFunctionImpl()
 

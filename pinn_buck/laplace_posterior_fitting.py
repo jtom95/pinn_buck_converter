@@ -280,7 +280,7 @@ class LaplaceApproximator:
         """
         
         X = X.to(self.device)
-        targets = (X[1:, :, :2].clone().detach(), X[:-1, :, :2].clone().detach())
+        targets = self.model.targets(X).to(self.device)
 
         def closure(theta_vec: torch.Tensor) -> torch.Tensor:
             # 1) new param dict for functional_call

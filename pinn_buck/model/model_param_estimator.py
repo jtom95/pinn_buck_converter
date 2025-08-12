@@ -166,7 +166,7 @@ class BaseBuckEstimator(nn.Module, ABC):
         return i_new, v_new
 
     @abstractmethod
-    def forward(self, X: torch.Tensor, **kwargs):
+    def forward(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
         """
         Parameters
         ----------
@@ -175,7 +175,23 @@ class BaseBuckEstimator(nn.Module, ABC):
 
         Returns
         -------
-        Pred : Tuple[torch.Tensor, torch.Tensor] for forward and backward predictions or torch.Tensor for a single direction prediction.
+        Pred : torch.Tensor predictions.
+        """
+        ...
+        
+    @abstractmethod
+    def targets(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
+        """
+        Returns the target values for the given input tensor X. The targets must
+        be generated to match the logic and the shape of the forward pass.
+        Parameters
+        ----------
+        X : (N, T, 4) tensor — rows xₙ = [iₙ, vₙ, Dₙ, Δtₙ].
+            Sub-classes choose how to slice/reshape X before calling `_rk4_step`.
+        Returns
+        -------
+        targets : torch.Tensor
+            The target values for the given input tensor X.
         """
         ...
 
@@ -190,6 +206,52 @@ class BuckParamEstimator(BaseBuckEstimator):
         Returns:
         -------
         Tuple[torch.Tensor, torch.Tensor]
+        pred: Forward prediction of the buck converter state at time n+1. Shape (B, T, 2)
+        """
+
+        i, v = X[..., 0], X[..., 1]
+        D, dt = X[..., 2], X[..., 3]
+
+        p = self._physical()
+
+        # Forward and backward predictions (vectorized)
+        pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)
+        # note that in the bck_pred we use D[:-1] and dt[:-1], this is because we want to predict the
+        # voltages and currents at the time n, given their values after the dt time at time n+1.
+        # transform the tuple into a tensor by stacking on the last dimension
+        pred = torch.stack(pred, dim=-1)  # shape (B, T, 2)
+        return pred
+
+    def targets(self, X:torch.Tensor, **kwargs) -> torch.Tensor:
+        """
+        Returns the target values for the given input tensor X. The targets must
+        be generated to match the logic and the shape of the forward pass.
+
+        Parameters
+        ----------
+        X : (N, T, 4) tensor — rows xₙ = [iₙ, vₙ, Dₙ, Δtₙ].
+            Sub-classes choose how to slice/reshape X before calling `_rk4_step`.
+
+        Returns
+        -------
+        targets : torch.Tensor
+            The target values for the given input tensor X.
+        """
+        return X[1:, :, :2].clone().detach()
+    
+
+class BuckParamEstimatorFwdBck(BaseBuckEstimator):
+    """Physics‑informed NN for parameter estimation in a buck converter."""
+
+    def forward(self, X: torch.Tensor):
+        """
+        X: [batch, n_transients, 4] -> (i_n, v_n, D, dt)
+
+        Returns:
+        -------
+        torch.tensor (2, B, T, 2)
+
+        along the first axis of the tensor:
         fwd_pred: Forward prediction of the buck converter state at time n+1. Shape (B, T, 2)
         bck_pred: Backward prediction of the buck converter state at time n-1. Shape (B, T, 2)
         """
@@ -202,12 +264,31 @@ class BuckParamEstimator(BaseBuckEstimator):
         # Forward and backward predictions (vectorized)
         fwd_pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)
         bck_pred = self._rk4_step(i[1:], v[1:], D[:-1], dt[:-1], p, sign=-1)
-        # note that in the bck_pred we use D[:-1] and dt[:-1], this is because we want to predict the 
-        # voltages and currents at the time n, given their values after the dt time at time n+1. However, 
+        # note that in the bck_pred we use D[:-1] and dt[:-1], this is because we want to predict the
+        # voltages and currents at the time n, given their values after the dt time at time n+1. However,
         # D and dt refer to the time step from n to n+1, so we need to use the same D and dt as in the forward prediction.
 
         # transform the tuple into a tensor by stacking on the last dimension
         fwd_pred = torch.stack(fwd_pred, dim=-1)  # shape (B, T, 2)
         bck_pred = torch.stack(bck_pred, dim=-1)  # shape (B, T, 2)
 
-        return fwd_pred, bck_pred
+        return torch.stack((fwd_pred, bck_pred), dim=0)  # shape (2, B, T, 2)
+
+    def targets(self, X, **kwargs) -> torch.Tensor:
+        """
+        Returns the target values for the given input tensor X. The targets must
+        be generated to match the logic and the shape of the forward pass.
+
+        Parameters
+        ----------
+        X : (N, T, 4) tensor — rows xₙ = [iₙ, vₙ, Dₙ, Δtₙ].
+            Sub-classes choose how to slice/reshape X before calling `_rk4_step`.
+
+        Returns
+        -------
+        targets : torch.Tensor
+            The target values for the given input tensor X, must be both forward and backward predictions.
+        """
+        target_fwd = X[1:, :, :2].clone().detach()
+        target_bck = X[:-1, :, :2].clone().detach()
+        return torch.stack((target_fwd, target_bck), dim=0)  # shape (2, B, T, 2)

@@ -3,42 +3,42 @@ import torch
 from ..config import Parameters
 from .loss_function_configs import LikelihoodLossFunction, PriorLossFunction, MAPLossFunction, LossFunctionFactory
 from ..parameter_transformation import make_log_param
+from .residuals import ResidualFunc, basic_residual
 
 
 ## Likelihood Loss Functions
-def only_fw_loss_whitened(
-    fwd_pred: torch.Tensor,
-    bck_pred: torch.Tensor,
-    fwd_target: torch.Tensor,
-    bck_target: torch.Tensor,
+def loss_whitened(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    residual_func: ResidualFunc,
     L: torch.Tensor,
 ) -> torch.Tensor:
     """
     Compute r^T Σ^{-1} r via Cholesky whitening: r -> z = L^{-1} r.
     """
-    fwd_residual = fwd_pred - fwd_target  # shape (B, T, 2)
-    # bck_residual = bck_pred - bck_target  # shape (B, T, 2)
+    r = residual_func(pred, target)  # shape (B, T, 2)
+
+    # take the last shape of r to get the number of state variables
+    n_state_vars = r.shape[-1]
 
     # L has a Tx4x4 shape
-    L2b2 = L[:, :2, :2]
+    L_state_var = L[..., :n_state_vars, :n_state_vars]
 
-    r = fwd_residual  # (B, T, 2)
-
-    if L2b2.dim() == 2:
+    if L_state_var.dim() == 2:
         # if the L tensor has 2 dimensions, it is a single covariance matrix
-        r_flat = r.view(-1, 2)  # flatten to (B*T, 2)
-        z = torch.linalg.solve_triangular(L2b2, r_flat.T, upper=False).T  # shape [N, 2]
+        r_flat = r.view(-1, n_state_vars)  # flatten to (B*T, n_state_vars)
+        z = torch.linalg.solve_triangular(L_state_var, r_flat.T, upper=False).T  # shape [N, n_state_vars]
         return 0.5 * z.square().sum()
 
     # if the L tensor has 3 dimensions, the first dimension is the number of transients
-    if L2b2.dim() != 3 or L2b2.shape[1:] != (2, 2):
-        raise ValueError("L must have shape (2,2) or (T,2,2)")
+    if L_state_var.dim() != 3 or L_state_var.shape[1:] != (n_state_vars, n_state_vars):
+        raise ValueError(f"L must have shape ({n_state_vars},{n_state_vars}) or (T,{n_state_vars},{n_state_vars})")
 
     # --- per‑transient covariances ------------------------------------------------
     # r : (B, T, 2)  → permute to (T, B, 2) so transient is leading batch dim
-    r_tb2 = r.permute(1, 0, 2)  # (T, B, 2)
+    r_permuted = r.permute(1, 0, 2)  # (T, B, 2)
     # RHS for solve_triangular must be (T, 2, B)
-    z = torch.linalg.solve_triangular(L2b2, r_tb2.transpose(1, 2), upper=False)  # (T, 2, B)
+    z = torch.linalg.solve_triangular(L_state_var, r_permuted.transpose(1, 2), upper=False)  # (T, 2, B)
 
     ## IMPORTANT NOTE:
     # Note that using solve_triangular is much more stable for the gradients and optimization
@@ -235,8 +235,9 @@ def log_normal_prior(logparams: Parameters, nominal: Parameters, sigma: Paramete
 def build_map_loss(
     initial_params: Parameters,
     initial_uncertainty: Parameters,
-    loss_likelihood_function: Union[LikelihoodLossFunction, Callable],
-    prior_function: Optional[Union[PriorLossFunction, Callable]] = log_normal_prior,
+    loss_likelihood_function: LikelihoodLossFunction,
+    residual_function: ResidualFunc = basic_residual,
+    prior_function: Optional[PriorLossFunction] = log_normal_prior,
     prior_function_kwargs: Optional[dict] = None,
     weight_prior_loss: float = 1.0,
     **kwargs,
@@ -259,14 +260,11 @@ def build_map_loss(
         preds: Tuple[torch.Tensor, torch.Tensor],
         targets: Tuple[torch.Tensor, torch.Tensor],
     ) -> torch.Tensor:
-        fwd_pred, bck_pred = preds
-        fwd_target, bck_target = targets
 
         ll = loss_likelihood_function(
-            fwd_pred=fwd_pred,
-            bck_pred=bck_pred,
-            fwd_target=fwd_target,
-            bck_target=bck_target,
+            pred=preds,
+            target=targets,
+            residual_func=residual_function,
             **kwargs,
         )
 

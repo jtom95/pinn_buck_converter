@@ -196,10 +196,7 @@ class Trainer:
     def evaluate_loss(
         self,
         X: torch.Tensor,
-        loss_fn: Callable[
-            [Parameters, Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-            torch.Tensor,
-        ],
+        loss_fn: MAPLossFunction,
         targets: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         parameter_guess: Optional[Parameters] = None,
     ) -> torch.Tensor:
@@ -310,10 +307,11 @@ class Trainer:
                 self.log_results(it, loss, self.model.get_estimates(), lbfgs_optim)
 
     def fit(self, X):
-        X = X.detach().to(self.device)
-        targets = X[1:, :, :2].clone().detach(), X[:-1, :, :2].clone().detach()
+        # get targets and move to the correct device
+        targets = self.model.targets(X).to(self.device)
 
-        self.adam_fit(X, targets)
+        ## fit with Adam
+        self.adam_fit(X, targets, evaluate_initial_loss=True)
 
         # # → LBFGS
         # LBFGS optimization tends to find stable solutions that also minimize the gradient norm.

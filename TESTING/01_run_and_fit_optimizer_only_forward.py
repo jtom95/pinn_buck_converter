@@ -23,12 +23,7 @@ from pinn_buck.noise import add_noise_to_Measurement
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
 from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator
 from pinn_buck.model_results.history import TrainingHistory
-from pinn_buck.model.loss_function_archive import (
-    build_map_loss,
-    only_fw_loss_whitened,
-    fw_bw_loss_whitened,
-    diag_second_order_loss,
-)
+from pinn_buck.model.loss_function_archive import build_map_loss, loss_whitened
 
 from pinn_buck.io import LoaderH5
 
@@ -114,13 +109,9 @@ def rel_tolerance_to_sigma(rel_tol: Parameters) -> Parameters:
 # %%
 from dataclasses import dataclass
 
-from pinn_buck.data_noise_modeling.jacobian_estimation import estimate_Jacobian
-from pinn_buck.data_noise_modeling.covariance_matrix_blocks_funcs import covariance_matrix_on_standard_residuals
-from pinn_buck.data_noise_modeling.covariance_matrix_auxil import (
-    generate_residual_covariance_matrix,
-    chol,
-    chol_inv,
-)
+from pinn_buck.data_noise_modeling.jacobian_estimation import JacobianEstimator
+from pinn_buck.data_noise_modeling.covariance_matrix_function_archive import covariance_matrix_on_basic_residuals, generate_residual_covariance_matrix, chol
+
 
 # %%
 ## Noise Power
@@ -155,24 +146,17 @@ io = LoaderH5(db_dir, h5filename)
 io.load("10 noise")
 X = torch.tensor(io.M.data, device=device)
 model = BuckParamEstimator(param_init = NOMINAL).to(device)
+jac_estimator = JacobianEstimator(model)
 
-jacobians_stack_fwd = estimate_Jacobian(
-    model, X, direction="forward", 
-    by_series=True, 
-    number_of_samples=500, 
-    dtype=torch.float64
-    )
 
-jacobians_stack_bck = estimate_Jacobian(
-    model, X, direction="backward",
-    by_series=True,
-    number_of_samples=500,
-    dtype=torch.float64
-    )
-for i in range(jacobians_stack_fwd.shape[0]):
+jacobians_stack = jac_estimator.estimate_Jacobian(
+    X, by_series=True, number_of_samples=500, dtype=torch.float64
+)
+
+
+for i in range(jacobians_stack.shape[0]):
     print(f"Transient {i+1}:")
-    print("Forward Jacobian:\n", jacobians_stack_fwd[i])
-    print("Backward Jacobian:\n", jacobians_stack_bck[i])
+    print("Forward Jacobian:\n", jacobians_stack[i])
     print("-" * 40)
 
 
@@ -194,64 +178,30 @@ for i in range(jacobians_stack_fwd.shape[0]):
 #         print("-" * 40)
 
 # crop the jacobians to be 2x2: only noise on i and v
-jacobians_stack_fwd = jacobians_stack_fwd[:, :2, :2]
-jacobians_stack_bck = jacobians_stack_bck[:, :2, :2]
+jacobians_stack = jacobians_stack[:, :2, :2]
 
-def make_transient_covariance_matrices(
-    data_covariance: Tuple[float, float],
-    residual_covariance_block_func: Callable,
-    jac_fwd: Iterable[torch.Tensor],
-    jac_bck: Iterable[torch.Tensor],
-    inlcude_diag_terms: bool = False,
-    damp: float = 1e-7,
-    dtype: torch.dtype = torch.float64
-) -> torch.Tensor:
-    # check the number of fwd and bck jacobians is the same
-    if len(jac_fwd) != len(jac_bck):
-        raise ValueError("Number of forward and backward Jacobians must be the same.")
-    covariance_matrices = []
-    for jac_fwd_i, jac_bck_i in zip(jac_fwd, jac_bck):
-        cov_matrix = generate_residual_covariance_matrix(
-            data_covariance=data_covariance,
-            residual_covariance_block_func=residual_covariance_block_func,
-            jac_fwd=jac_fwd_i,
-            jac_bck=jac_bck_i,
-            include_diag_terms=inlcude_diag_terms,
-            damp=damp,
-            dtype=dtype
-        )
-        covariance_matrices.append(cov_matrix)
-    return torch.stack(covariance_matrices)  # (T, 2, 2)
-
-
-covariance_matrices_adc = make_transient_covariance_matrices(
+covariance_matrices_adc = generate_residual_covariance_matrix(
     data_covariance=(noise_power_ADC_i, noise_power_ADC_v),
-    residual_covariance_block_func=covariance_matrix_on_standard_residuals,
-    jac_fwd=jacobians_stack_fwd,
-    jac_bck=jacobians_stack_bck,
-    inlcude_diag_terms=False,
-    damp=1e-7,
-    dtype=torch.float64
+    residual_covariance_func=covariance_matrix_on_basic_residuals,
+    jac=jacobians_stack,
+    damp=1e-10,
+    dtype=torch.float64,
 )
 
-covariance_matrices_5 = make_transient_covariance_matrices(
+covariance_matrices_5 = generate_residual_covariance_matrix(
     data_covariance=(noise_power_5_i, noise_power_5_v),
-    residual_covariance_block_func=covariance_matrix_on_standard_residuals,
-    jac_fwd=jacobians_stack_fwd,
-    jac_bck=jacobians_stack_bck,
-    inlcude_diag_terms=False,
-    damp=1e-7,
-    dtype=torch.float64
+    residual_covariance_func=covariance_matrix_on_basic_residuals,
+    jac=jacobians_stack,
+    damp=1e-10,
+    dtype=torch.float64,
 )
 
-covariance_matrices_10 = make_transient_covariance_matrices(
+covariance_matrices_10 = generate_residual_covariance_matrix(
     data_covariance=(noise_power_10_i, noise_power_10_v),
-    residual_covariance_block_func=covariance_matrix_on_standard_residuals,
-    jac_fwd=jacobians_stack_fwd,
-    jac_bck=jacobians_stack_bck,
-    inlcude_diag_terms=False,
-    damp=1e-7,
-    dtype=torch.float64
+    residual_covariance_func=covariance_matrix_on_basic_residuals,
+    jac=jacobians_stack,
+    damp=1e-10,
+    dtype=torch.float64,
 )
 
 
@@ -272,55 +222,13 @@ L_5 = chol(covariance_matrices_5)
 L_10 = chol(covariance_matrices_10)
 
 
-### Build full covariance matrices from the block builders
-
-covariance_matrices_adc_full = make_transient_covariance_matrices(
-    data_covariance=torch.tensor([noise_power_ADC_i, noise_power_ADC_v]),
-    residual_covariance_block_func=covariance_matrix_on_standard_residuals,
-    jac_fwd=jacobians_stack_fwd,
-    jac_bck=jacobians_stack_bck,
-    inlcude_diag_terms=True,
-    damp=1e-7,
-    dtype=torch.float64
-)
-
-covariance_matrices_5_full = make_transient_covariance_matrices(
-    data_covariance=torch.tensor([noise_power_5_i, noise_power_5_v]),
-    residual_covariance_block_func=covariance_matrix_on_standard_residuals,
-    jac_fwd=jacobians_stack_fwd,
-    jac_bck=jacobians_stack_bck,
-    inlcude_diag_terms=True,
-    damp=1e-7,
-    dtype=torch.float64
-)
-
-covariance_matrices_10_full = make_transient_covariance_matrices(
-    data_covariance=torch.tensor([noise_power_10_i, noise_power_10_v]),
-    residual_covariance_block_func=covariance_matrix_on_standard_residuals,
-    jac_fwd=jacobians_stack_fwd,
-    jac_bck=jacobians_stack_bck,
-    inlcude_diag_terms=True,
-    damp=1e-7,
-    dtype=torch.float64
-)
-
-
-# print the full covariance matrices
-for name, matrices in zip(["ADC noise", "5 LSB noise", "10 LSB noise"], 
-                            [covariance_matrices_adc_full, covariance_matrices_5_full, covariance_matrices_10_full]):
-    print(f"Full Covariance Matrix for {name}:")
-    print(matrices)
-    print("-" * 40)
-
-L_adc_full = chol(covariance_matrices_adc_full)
-L_5_full = chol(covariance_matrices_5_full)
-L_10_full = chol(covariance_matrices_10_full)
-
-
 # %%
 from typing import Dict
 from pinn_buck.model.trainer import Trainer, TrainingConfigs
 from pinn_buck.laplace_posterior_fitting import LaplaceApproximator, LaplacePosterior
+
+from pinn_buck.model.residuals import basic_residual
+from pinn_buck.model.loss_function_archive import loss_whitened, build_map_loss
 
 set_seed(123)
 device = "cpu"
@@ -357,18 +265,6 @@ l_dict = {
     3: L_5,  # 5 noise
     4: L_10,  # 10 noise
 }
-l_dict_full = {
-    1: L_adc_full,  # ADC error
-    3: L_5_full,  # 5 noise
-    4: L_10_full,  # 10 noise
-}
-
-S_dict_full = {
-    1: covariance_matrices_adc_full,  # ADC error
-    3: covariance_matrices_5_full,  # 5 noise
-    4: covariance_matrices_10_full,  # 10 noise
-}
-
 
 noisy_measurements = {}
 trained_models = {}
@@ -398,16 +294,14 @@ for idx, group_number in enumerate(l_dict.keys()):
     model = BuckParamEstimator(param_init = NOMINAL).to(device)
 
     chol_L = l_dict[group_number]  # Cholesky factor of the noise covariance matrix
-    chol_L_full = l_dict_full[group_number]  # Cholesky factor of the full noise covariance matrix
-
-    sig_r = S_dict_full[group_number]  # full noise covariance matrix
 
     trainer = Trainer(
         model=model,
         loss_fn=build_map_loss(
             initial_params=NOMINAL,
             initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-            loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
+            loss_likelihood_function=loss_whitened,  # loss function for the forward-backward pass
+            residual_function=basic_residual,
             L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
         ),
         cfg=run_configs,
@@ -415,7 +309,8 @@ for idx, group_number in enumerate(l_dict.keys()):
         lbfgs_loss_fn=build_map_loss(
             initial_params=NOMINAL,
             initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-            loss_likelihood_function=only_fw_loss_whitened,  # loss function for the forward-backward pass
+            loss_likelihood_function=loss_whitened,  # loss function for the forward-backward pass
+            residual_function=basic_residual,
             L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
         ),
         # lbfgs_loss_fn=build_map_loss(
@@ -443,7 +338,8 @@ for idx, group_number in enumerate(l_dict.keys()):
         loss_fn=build_map_loss(
             initial_params=NOMINAL,
             initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-            loss_likelihood_function=only_fw_loss_whitened,  # loss function for the forward-backward pass
+            loss_likelihood_function=loss_whitened,  # loss function for the forward-backward pass
+            residual_function=basic_residual,
             L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
         ),
         device=device,
