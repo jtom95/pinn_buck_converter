@@ -10,7 +10,7 @@ from scipy.stats import norm, lognorm
 from scipy.special import erf
 import numpy as np
 
-from .model.loss_function_configs import MAPLossFunction
+from .model.map_loss import MAPLoss
 from .config import Parameters
 from .constants import ParameterConstants
 from .model.model_param_estimator import BaseBuckEstimator
@@ -203,7 +203,7 @@ class LaplaceApproximator:
     def __init__(
         self,
         model: BaseBuckEstimator,
-        loss_fn: MAPLossFunction,
+        loss_fn: MAPLoss,
         device: torch.device = torch.device("cpu"),
         damping: float = 1e-6,
     ):

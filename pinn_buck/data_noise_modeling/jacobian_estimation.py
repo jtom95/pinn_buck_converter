@@ -1,15 +1,22 @@
 from typing import Literal, Optional
+from abc import ABC, abstractmethod
+
 
 import torch
 from torch.autograd.functional import jacobian
 
-
 from ..model.model_param_estimator import BaseBuckEstimator
 
-class JacobianEstimator:
-    def __init__(self, model: BaseBuckEstimator):
-        self.model = model
 
+class JacobianEstimatorBase(ABC):
+    @classmethod
+    @abstractmethod
+    def estimate_Jacobian(cls, X: torch.Tensor, model: BaseBuckEstimator, *args, **kwargs) -> torch.Tensor:
+        """Estimate the Jacobian of the model forward pass with respect to its inputs."""
+        ...
+
+
+class JacobianEstimator(JacobianEstimatorBase):
     @classmethod
     def estimate_J_single_t(
         cls, Xi: torch.Tensor, t: int, model: BaseBuckEstimator, dtype=torch.float32
@@ -30,11 +37,13 @@ class JacobianEstimator:
         J = torch.autograd.functional.jacobian(local_fwd, vec, create_graph=False)  # (2,4)
         return J
 
+    @classmethod
     def estimate_Jacobian(
-        self,
+        cls,
         X: torch.Tensor,  # (B, T, 4)
+        model: BaseBuckEstimator,
         *,
-        by_series: bool = False,
+        by_series: bool = True,
         number_of_samples: Optional[int] = None,
         dtype: torch.dtype = torch.float32,
         rng: Optional[torch.Generator] = None,
@@ -85,12 +94,12 @@ class JacobianEstimator:
             Xi = X[:, s].to(dtype).detach()  # (B,4)  independent series s
             Jsum = torch.zeros(2, 4, dtype=dtype, device=X.device)
             # update the model so that the load resistance is one and fixed to the value of the t-th load
-            model_params_T = self.model.get_estimates()
+            model_params_T = model.get_estimates()
             # can't directly set Parameter attributes because they are NamedTuples
             model_params_T = model_params_T._replace(
                 Rloads=[model_params_T.Rloads[s]]  # fix to the s-th load
             )
-            model_class = self.model.__class__
+            model_class = model.__class__
             model_clone = model_class(param_init=model_params_T)
 
             model_clone = model_clone.to(dtype=dtype, device=X.device)
@@ -98,7 +107,7 @@ class JacobianEstimator:
 
             for t in t_samples:
                 # choose the time-slice we differentiate with respect to
-                Ji = self.estimate_J_single_t(Xi, t, model_clone, dtype=dtype)
+                Ji = cls.estimate_J_single_t(Xi, t, model_clone, dtype=dtype)
                 Jsum += Ji
             J_series.append(Jsum / number_of_samples)
 
@@ -106,10 +115,7 @@ class JacobianEstimator:
         return J_stack if by_series else J_stack.mean(dim=0)
 
 
-class FwdBckJacobianEstimator:
-    def __init__(self, model: BaseBuckEstimator):
-        self.model = model
-
+class FwdBckJacobianEstimator(JacobianEstimatorBase):
     @staticmethod
     def _build_two_row_vec(x_row_next, x_row_this):
         # order: [i_{t+1}, v_{t+1}, D_t, Δt_t]
@@ -163,7 +169,7 @@ class FwdBckJacobianEstimator:
 
         J = torch.autograd.functional.jacobian(local_fwd, vec, create_graph=False)  # (2,4)
         return J
-    
+
     def _check_model_compatibility(self, X: torch.Tensor):
         if not isinstance(self.model, BaseBuckEstimator):
             raise TypeError(f"Expected model of type BaseBuckEstimator, got {type(self.model)}")
@@ -174,9 +180,11 @@ class FwdBckJacobianEstimator:
         if X.shape(pred)[0] != 2:
             raise ValueError(f"Expected 2 batches, got shape {X.shape(pred)}")
 
-    def estimate_Jacobian_fwd_bck(
-        self,
+    @classmethod
+    def estimate_Jacobian(
+        cls,
         X: torch.Tensor,  # (B, T, 4)
+        model: BaseBuckEstimator,
         *,
         direction: Literal["forward", "backward"] = "forward",
         by_series: bool = False,
@@ -213,7 +221,7 @@ class FwdBckJacobianEstimator:
             ``(2,4)`` if ``by_series=False`` else ``(T,2,4)``.
         """
 
-        self._check_model_compatibility(X)
+        cls._check_model_compatibility(X)
 
         B, T, _ = X.shape
         max_idx = B - 2  # last valid t
@@ -233,12 +241,12 @@ class FwdBckJacobianEstimator:
             Xi = X[:, s].to(dtype).detach()  # (B,4)  independent series s
             Jsum = torch.zeros(2, 4, dtype=dtype, device=X.device)
             # update the model so that the load resistance is one and fixed to the value of the t-th load
-            model_params_T = self.model.get_estimates()
+            model_params_T = model.get_estimates()
             # can't directly set Parameter attributes because they are NamedTuples
             model_params_T = model_params_T._replace(
                 Rloads=[model_params_T.Rloads[s]]  # fix to the s-th load
             )
-            model_class = self.model.__class__
+            model_class = model.__class__
             model_clone = model_class(param_init=model_params_T)
 
             model_clone = model_clone.to(dtype=dtype, device=X.device)
@@ -247,9 +255,9 @@ class FwdBckJacobianEstimator:
             for t in t_samples:
                 # choose the time-slice we differentiate with respect to
                 if direction == "forward":
-                    Ji = self.estimate_fwd_J_single_t(Xi, t, model_clone, dtype=dtype)
+                    Ji = cls.estimate_fwd_J_single_t(Xi, t, model_clone, dtype=dtype)
                 elif direction == "backward":
-                    Ji = self.estimate_bck_J_single_t(Xi, t, model_clone, dtype=dtype)
+                    Ji = cls.estimate_bck_J_single_t(Xi, t, model_clone, dtype=dtype)
                 Jsum += Ji
             J_series.append(Jsum / number_of_samples)
 

@@ -11,6 +11,7 @@ class LikelihoodLossFunction(ABC):
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
+        sum_result: bool = True,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -22,26 +23,11 @@ class LikelihoodLossFunction(ABC):
 
 class PriorLossFunction(ABC):
     @abstractmethod
-    def __call__(self, logparams: Parameters, **kwargs) -> torch.Tensor:
+    def __call__(self, logparams: Parameters, mu0: Parameters, sigma0: Parameters, **kwargs) -> torch.Tensor:
         """Compute the prior loss for the given parameters.
         This method should be implemented by subclasses.
         """
         pass
-
-
-class MAPLossFunction(ABC):
-    @abstractmethod
-    def __call__(
-        self,
-        parameter_guess: Parameters,
-        preds: Tuple[torch.Tensor, torch.Tensor],
-        targets: Tuple[torch.Tensor, torch.Tensor],
-    ) -> torch.Tensor:
-        """Compute the MAP loss for the given parameter guess, predictions, and targets.
-        This method should be implemented by subclasses.
-        """
-        pass
-
 
 class LossFunctionFactory:
     @staticmethod
@@ -55,11 +41,13 @@ class LossFunctionFactory:
                 self,
                 pred: torch.Tensor,
                 target: torch.Tensor,
+                sum_result: bool = True,
                 **kwargs,
             ) -> torch.Tensor:
                 return likelihood_func(
                     pred=pred,
                     target=target,
+                    sum_result=sum_result,
                     **kwargs,
                 )
 
@@ -72,24 +60,8 @@ class LossFunctionFactory:
         """
 
         class PriorLossFunctionImpl(PriorLossFunction):
-            def __call__(self, logparams: torch.Tensor, **kwargs) -> torch.Tensor:
-                return prior_func(logparams, **kwargs)
+            def __call__(self, logparams: torch.Tensor, mu0: Parameters, sigma0: Parameters, **kwargs) -> torch.Tensor:
+                return prior_func(logparams, mu0=mu0, sigma0=sigma0, **kwargs)
 
         return PriorLossFunctionImpl()
-
-    @staticmethod
-    def wrap_map_loss(map_loss_func: Callable) -> MAPLossFunction:
-        """
-        Dynamically wrap a normal function into a MAPLossFunction implementation.
-        """
-
-        class MAPLossFunctionImpl(MAPLossFunction):
-            def __call__(
-                self,
-                parameter_guess: Parameters,
-                preds: torch.Tensor,
-                targets: torch.Tensor,
-            ) -> torch.Tensor:
-                return map_loss_func(parameter_guess, preds, targets)
-        return MAPLossFunctionImpl()
 

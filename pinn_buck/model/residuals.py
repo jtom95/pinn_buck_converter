@@ -1,5 +1,6 @@
 import torch
 from typing import Callable, Dict, Tuple, Union
+import functools
 
 ResidualFunc = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
@@ -7,6 +8,7 @@ ResidualFunc = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 # define decorator that applies a residual function
 
 def residual_function_class(residual_func: ResidualFunc) -> ResidualFunc:
+    @functools.wraps(residual_func)
     def wrapper(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return residual_func(pred, target)
     return wrapper

@@ -8,7 +8,7 @@ from ..model_results.history import TrainingHistory
 from ..config import Parameters
 
 from .model_param_estimator import BaseBuckEstimator
-from .loss_function_configs import MAPLossFunction
+from .map_loss import MAPLoss
 
 
 @dataclass
@@ -31,17 +31,18 @@ class Trainer:
     def __init__(
         self,
         model: BaseBuckEstimator,
-        loss_fn: MAPLossFunction,
+        map_loss_adam: MAPLoss,
         cfg: TrainingConfigs = TrainingConfigs(),
-        lbfgs_loss_fn: Optional[MAPLossFunction] = None,
+        map_loss_lbfgs: Optional[MAPLoss] = None,
         device="cpu",
     ):
         self.model = model.to(device)
         self.model_class = model.__class__
-        self.loss_fn = loss_fn
-        self.lbfgs_loss_fn = lbfgs_loss_fn if lbfgs_loss_fn is not None else loss_fn
+        self.map_loss_adam = map_loss_adam
+        self.map_loss_lbfgs = map_loss_lbfgs if map_loss_lbfgs is not None else map_loss_adam.clone()
         self.cfg = cfg
         self.device = device
+
         self._history = {"loss": [], "params": [], "lr": [], "optimizer": [], "epochs": []}
 
     @property
@@ -143,7 +144,48 @@ class Trainer:
         print(f"[LBFGS] best ", end="")
         self.print_parameters(self.history.get_best_parameters("LBFGS"))
 
-    def adam_fit(self, X: torch.Tensor, targets: Tuple[torch.Tensor, torch.Tensor], evaluate_initial_loss: bool=True):
+    def _check_update_loss_callback(
+        self,
+        optimizer_name: str,
+        iteration: int,
+        update_callback: Optional[
+            Callable[[BaseBuckEstimator, MAPLoss, torch.Tensor], MAPLoss]
+        ],
+        update_every: Optional[int],
+        loss_attr: str,
+        X: torch.Tensor,
+        verbose: bool = True,
+    ) -> None:
+        """
+        If it's time, call `update_callback` to refresh the MAP loss stored at `self.<loss_attr>`.
+        Runs in eval() mode to ensure model forward pass is deterministic
+        (BN/Dropout off), but *autograd is still enabled* so Jacobian-based updates work.
+        """
+        if update_callback is None or update_every is None:
+            return
+        if update_every <= 0 or (iteration % update_every) != 0:
+            return
+
+        was_training = self.model.training
+        try:
+            self.model.eval()
+            current_loss_obj: MAPLoss = getattr(self, loss_attr)
+            new_loss_obj = update_callback(self.model, current_loss_obj, X).clone()
+            setattr(self, loss_attr, new_loss_obj)
+            
+        finally:
+            if was_training:
+                self.model.train()
+            else:
+                self.model.eval()
+
+    def adam_fit(
+        self,
+        X: torch.Tensor,
+        evaluate_initial_loss: bool = True,
+        update_loss_callback: Optional[Callable[[BaseBuckEstimator, MAPLoss, torch.Tensor], MAPLoss]] = None,
+        update_every: Optional[int] = None
+    ):
         """
         Fit the model using Adam optimizer.
 
@@ -156,7 +198,7 @@ class Trainer:
         if evaluate_initial_loss:
             # Evaluate the initial loss before starting the LBFGS optimization
             initial_loss = self.evaluate_loss(
-                X=X, targets=targets, loss_fn=self.loss_fn
+                X=X, loss_fn=self.map_loss_adam
             )
             self.log_results(0, initial_loss, self.model.get_estimates(), opt)
 
@@ -168,12 +210,22 @@ class Trainer:
         )
 
         for it in range(1, self.cfg.epochs_adam + 1):
+            # run callback function
+            self._check_update_loss_callback(
+                optimizer_name="Adam",
+                iteration=it,
+                update_callback=update_loss_callback,
+                update_every=update_every,
+                loss_attr="map_loss_adam",
+                X=X,
+            )
             self.model.train()
             opt.zero_grad()  # reset gradients
 
+            targets = self.model.targets(X).to(self.device)
             preds = self.model(X)  # forward pass
 
-            loss: torch.Tensor = self.loss_fn(
+            loss: torch.Tensor = self.map_loss_adam(
                 parameter_guess=self.model.logparams, preds=preds, targets=targets
             )
 
@@ -196,8 +248,7 @@ class Trainer:
     def evaluate_loss(
         self,
         X: torch.Tensor,
-        loss_fn: MAPLossFunction,
-        targets: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        loss_fn: MAPLoss,
         parameter_guess: Optional[Parameters] = None,
     ) -> torch.Tensor:
         """
@@ -211,8 +262,6 @@ class Trainer:
             torch.Tensor: The computed loss value.
         """
         X_ = X.clone().detach().to(self.device)
-        if targets is None:
-            targets = (X_[1:, :, :2].clone().detach(), X_[:-1, :, :2].clone().detach())
         if parameter_guess is not None:
             # copy the model so we don't modify the original model
             model_ = self.model_class(param_init=parameter_guess).to(self.device)
@@ -221,10 +270,13 @@ class Trainer:
 
         # Remember and restore the original mode
         was_training = model_.training
+
+        # I use try so that if anything happens I set the model back to .train()
         try:
             model_.eval()
             with torch.no_grad():
-                preds = model_(X_)
+                preds = model_(X_) # forward pass
+                targets = model_.targets(X_).to(self.device)
                 loss = loss_fn(parameter_guess=model_.logparams, preds=preds, targets=targets)
         finally:
             # Restore original mode
@@ -238,8 +290,9 @@ class Trainer:
     def lbfgs_fit(
         self,
         X: torch.Tensor,
-        targets: Tuple[torch.Tensor, torch.Tensor],
         evaluate_initial_loss: bool = True,
+        update_loss_callback: Optional[Callable[[BaseBuckEstimator, MAPLoss, torch.Tensor], MAPLoss]] = None,
+        update_every: Optional[int] = None
     ):
         """
         Fit the model using LBFGS optimizer.
@@ -258,7 +311,7 @@ class Trainer:
         if evaluate_initial_loss:
             # Evaluate the initial loss before starting the LBFGS optimization
             initial_loss = self.evaluate_loss(
-                X=X, targets=targets, loss_fn=self.lbfgs_loss_fn
+                X=X, loss_fn=self.map_loss_lbfgs
             )
             self.log_results(0, initial_loss, self.model.get_estimates(), lbfgs_optim)
 
@@ -271,8 +324,9 @@ class Trainer:
             self.model.train()
             lbfgs_optim.zero_grad()
 
-            pred = self.model(X)
-            loss_val = self.lbfgs_loss_fn(self.model.logparams, pred, targets)
+            pred = self.model(X) # forward pass
+            targets = self.model.targets(X).to(self.device)
+            loss_val = self.map_loss_lbfgs(self.model.logparams, pred, targets)
 
             # 1)  finite-loss check
             if not torch.isfinite(loss_val):
@@ -291,6 +345,17 @@ class Trainer:
         #  LBFGS training loop
         # ------------------------------------------------------------------
         for it in range(1, self.cfg.epochs_lbfgs + 1):
+
+            # run callback function
+            self._check_update_loss_callback(
+                optimizer_name="LBFGS",
+                iteration=it,
+                update_callback=update_loss_callback,
+                update_every=update_every,
+                loss_attr="map_loss_lbfgs",
+                X=X,
+            )
+
             try:
                 loss = lbfgs_optim.step(closure)
             except RuntimeError as err:
@@ -306,17 +371,21 @@ class Trainer:
             if it % self.cfg.save_every_lbfgs == 0:
                 self.log_results(it, loss, self.model.get_estimates(), lbfgs_optim)
 
-    def fit(self, X):
-        # get targets and move to the correct device
-        targets = self.model.targets(X).to(self.device)
+    def fit(
+        self,
+        X: torch.Tensor,
+        update_loss_callback: Optional[Callable[[BaseBuckEstimator, MAPLoss, torch.Tensor], MAPLoss]] = None,
+        update_every_adam: Optional[int] = None,
+        update_every_lbfgs: Optional[int] = None,
+    ):
 
         ## fit with Adam
-        self.adam_fit(X, targets, evaluate_initial_loss=True)
+        self.adam_fit(X, evaluate_initial_loss=True, update_loss_callback=update_loss_callback, update_every=update_every_adam)
 
         # # → LBFGS
         # LBFGS optimization tends to find stable solutions that also minimize the gradient norm.
         # This will be useful when we want to compute the Laplace posterior, which relies on the Hessian of the loss function.
-        self.lbfgs_fit(X, targets, evaluate_initial_loss=True)
+        self.lbfgs_fit(X, evaluate_initial_loss=True, update_loss_callback=update_loss_callback, update_every=update_every_lbfgs)
 
         # After training, we can save the history of losses and parameters
         print("Training concluded.")
