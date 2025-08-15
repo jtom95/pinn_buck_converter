@@ -1,4 +1,4 @@
-from typing import Iterable, List, Dict, Union
+from typing import Iterable, List, Dict, Union, Tuple
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -19,6 +19,7 @@ def plot_tracked_parameters(
     ax: Iterable[plt.Axes] = None,
     optimizer_alpha: float = 0.06,  # shading strength
     optimizer_line_alpha: float = 0.4,
+    skip_elements: Tuple[str, ...] = ("callbacks",),
     **kwargs,
 ):
     """
@@ -36,7 +37,7 @@ def plot_tracked_parameters(
     has_lr = "learning_rate" in df_extra.columns
 
     core_cols = list(df_extra.columns)
-    for c in ["optimizer", "epoch"]:  # we ignore epoch entirely
+    for c in ("optimizer", "epoch") + skip_elements:  # we ignore epoch entirely
         if c in core_cols:
             core_cols.remove(c)
     if skip_loss and "loss" in core_cols:
@@ -163,7 +164,6 @@ def plot_tracked_parameters(
         ax_lr.legend(loc="best")
         draw_optimizer_bands(ax_lr)
         last_used += 1
-
 
     # Hide any empty subplots
     for j in range(last_used, len(axes)):

@@ -31,19 +31,17 @@ class Trainer:
     def __init__(
         self,
         model: BaseBuckEstimator,
-        map_loss_adam: MAPLoss,
+        map_loss: MAPLoss,
         cfg: TrainingConfigs = TrainingConfigs(),
-        map_loss_lbfgs: Optional[MAPLoss] = None,
         device="cpu",
     ):
         self.model = model.to(device)
         self.model_class = model.__class__
-        self.map_loss_adam = map_loss_adam
-        self.map_loss_lbfgs = map_loss_lbfgs if map_loss_lbfgs is not None else map_loss_adam.clone()
+        self.map_loss = map_loss
         self.cfg = cfg
         self.device = device
-
-        self._history = {"loss": [], "params": [], "lr": [], "optimizer": [], "epochs": []}
+        self._history = {"loss": [], "params": [], "lr": [], "optimizer": [], "epochs": [], "callbacks": []}
+        self.callback_count = 0
 
     @property
     def history(self) -> TrainingHistory:
@@ -53,6 +51,7 @@ class Trainer:
             optimizer_history=self._history["optimizer"],
             learning_rate=self._history["lr"],
             epochs=self._history["epochs"],
+            callbacks=self._history["callbacks"],
         )
 
     @staticmethod
@@ -130,6 +129,7 @@ class Trainer:
         self._history["params"].append(est)
         self._history["lr"].append(opt.param_groups[0]["lr"])
         self._history["epochs"].append(it)
+        self._history["callbacks"].append(self.callback_count)
 
     def print_summary(self):
         print(
@@ -152,9 +152,7 @@ class Trainer:
             Callable[[BaseBuckEstimator, MAPLoss, torch.Tensor], MAPLoss]
         ],
         update_every: Optional[int],
-        loss_attr: str,
         X: torch.Tensor,
-        verbose: bool = True,
     ) -> None:
         """
         If it's time, call `update_callback` to refresh the MAP loss stored at `self.<loss_attr>`.
@@ -169,10 +167,11 @@ class Trainer:
         was_training = self.model.training
         try:
             self.model.eval()
-            current_loss_obj: MAPLoss = getattr(self, loss_attr)
-            new_loss_obj = update_callback(self.model, current_loss_obj, X).clone()
-            setattr(self, loss_attr, new_loss_obj)
-            
+            new_loss_obj = update_callback(self.model, self.map_loss, X).clone()
+            self.map_loss = new_loss_obj
+            self.callback_count += 1
+            print(f"[{optimizer_name}] vif {1/getattr(new_loss_obj, 'weight_likelihood_loss'):.4e} at iteration {iteration}")
+
         finally:
             if was_training:
                 self.model.train()
@@ -198,7 +197,7 @@ class Trainer:
         if evaluate_initial_loss:
             # Evaluate the initial loss before starting the LBFGS optimization
             initial_loss = self.evaluate_loss(
-                X=X, loss_fn=self.map_loss_adam
+                X=X, loss_fn=self.map_loss
             )
             self.log_results(0, initial_loss, self.model.get_estimates(), opt)
 
@@ -216,7 +215,6 @@ class Trainer:
                 iteration=it,
                 update_callback=update_loss_callback,
                 update_every=update_every,
-                loss_attr="map_loss_adam",
                 X=X,
             )
             self.model.train()
@@ -225,7 +223,7 @@ class Trainer:
             targets = self.model.targets(X).to(self.device)
             preds = self.model(X)  # forward pass
 
-            loss: torch.Tensor = self.map_loss_adam(
+            loss: torch.Tensor = self.map_loss(
                 parameter_guess=self.model.logparams, preds=preds, targets=targets
             )
 
@@ -300,6 +298,7 @@ class Trainer:
             X (torch.Tensor): Input tensor of shape (B, T, 4) where B is the batch size and T is the number of transients.
             targets (Tuple[torch.Tensor, torch.Tensor]): Tuple of tensors containing the forward and backward targets.
         """
+
         # Initialize LBFGS optimizer
         lbfgs_optim = torch.optim.LBFGS(
             self.model.parameters(),
@@ -311,7 +310,7 @@ class Trainer:
         if evaluate_initial_loss:
             # Evaluate the initial loss before starting the LBFGS optimization
             initial_loss = self.evaluate_loss(
-                X=X, loss_fn=self.map_loss_lbfgs
+                X=X, loss_fn=self.map_loss
             )
             self.log_results(0, initial_loss, self.model.get_estimates(), lbfgs_optim)
 
@@ -326,7 +325,7 @@ class Trainer:
 
             pred = self.model(X) # forward pass
             targets = self.model.targets(X).to(self.device)
-            loss_val = self.map_loss_lbfgs(self.model.logparams, pred, targets)
+            loss_val = self.map_loss(self.model.logparams, pred, targets)
 
             # 1)  finite-loss check
             if not torch.isfinite(loss_val):
@@ -352,7 +351,6 @@ class Trainer:
                 iteration=it,
                 update_callback=update_loss_callback,
                 update_every=update_every,
-                loss_attr="map_loss_lbfgs",
                 X=X,
             )
 
@@ -384,7 +382,7 @@ class Trainer:
 
         # # → LBFGS
         # LBFGS optimization tends to find stable solutions that also minimize the gradient norm.
-        # This will be useful when we want to compute the Laplace posterior, which relies on the Hessian of the loss function.
+        # This will be useful when we want to compute the Laplace posterior, which relies on the Hessian of the loss function.        
         self.lbfgs_fit(X, evaluate_initial_loss=True, update_loss_callback=update_loss_callback, update_every=update_every_lbfgs)
 
         # After training, we can save the history of losses and parameters

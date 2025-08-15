@@ -194,7 +194,7 @@ class ResultsComparerTwo:
 
     def _normalize_experiments(
         self,
-        experiments: Optional[Union[str, Tuple[str, str]]],
+        experiments: Optional[Union[str, Tuple[str, str]]]=None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Normalize experiments input:
@@ -319,6 +319,8 @@ class ResultsComparerTwo:
         legend_fontsize: Optional[int] = 12,
         legend_ncol: Optional[int] = None,
         legend_frameon: Optional[bool] = False,
+        legend_bbox_to_anchor_vertical=-0.5,
+        skip_elements: Tuple[str, ...] = ("callbacks",),
         **kwargs,
     ):
         """
@@ -391,6 +393,7 @@ class ResultsComparerTwo:
                 color=color,
                 linestyle=ls,
                 figsize=figsize,
+                skip_elements=skip_elements,
                 **kwargs,
             )
 
@@ -413,6 +416,14 @@ class ResultsComparerTwo:
 
         if first_fig_ax is not None:
             fig, ax = first_fig_ax
-            place_shared_legend(fig, ax.ravel(), legend_title=legend_title, title_fontsize=legend_fontsize, frameon=legend_frameon, ncol=legend_ncol)
+            place_shared_legend(
+                fig,
+                ax.ravel(),
+                legend_title=legend_title,
+                title_fontsize=legend_fontsize,
+                frameon=legend_frameon,
+                ncol=legend_ncol,
+                bbox_to_anchor_vertical=legend_bbox_to_anchor_vertical,
+            )
 
         return first_fig_ax if first_fig_ax is not None else (None, ax)

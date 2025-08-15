@@ -52,6 +52,34 @@ def loss_whitened(
     return res_z
 
 
+def loss_whitened_fwbk(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    residual_func: ResidualFunc,
+    L_fwd: torch.Tensor,
+    L_bck: torch.Tensor,
+) -> torch.Tensor:
+    
+    fwd_pred, bck_pred = pred
+    fwd_target, bck_target = target
+    
+    loss_fwd = loss_whitened(
+        fwd_pred,
+        fwd_target,
+        residual_func,
+        L_fwd,
+    )
+
+    loss_bck = loss_whitened(
+        bck_pred,
+        bck_target,
+        residual_func,
+        L_bck,
+    )
+
+    return loss_fwd + loss_bck
+
+
 def loss_whitened_r_delta(
     fwd_pred: torch.Tensor,
     bck_pred: torch.Tensor,

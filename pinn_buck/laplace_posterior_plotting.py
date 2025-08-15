@@ -1,12 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, Iterable, Optional, Literal
+from typing import Dict, Iterable, Optional, Literal, Tuple
 from scipy.stats import lognorm, norm
 from pinn_buck.constants import ParameterConstants
 
 from typing import Protocol, runtime_checkable
 
 from .laplace_posterior_fitting import LaplacePosterior
+from .config import Parameters
 
 
 @runtime_checkable
@@ -24,20 +25,11 @@ class LaplacePosteriorPlotter:
     (already in physical units), never on raw theta_log/Sigma_log.
     """
 
-    NOMINAL = ParameterConstants.NOMINAL
-    REL_TOL = ParameterConstants.REL_TOL
-    _SCALE = ParameterConstants.SCALE
-    TRUE_PARAMS = ParameterConstants.TRUE
-
     # ---------- small helpers ----------
 
     @classmethod
-    def _prior_dist_for(cls, name: str) -> RVLike:
-        nominal = cls.NOMINAL.get_from_iterator_name(name)
-        rel_tol = cls.REL_TOL.get_from_iterator_name(name)
-        sigma_prior = np.log(1.0 + rel_tol)
-        mu_prior = np.log(nominal)
-        return lognorm(s=sigma_prior, scale=np.exp(mu_prior))
+    def _prior_dist_for(cls, mu, sigma) -> RVLike:
+        return lognorm(s=sigma, scale=mu)
 
     @staticmethod
     def _format_axis(ax: plt.Axes, name: str) -> None:
@@ -54,7 +46,10 @@ class LaplacePosteriorPlotter:
     def plot_laplace_posteriors(
         cls,
         lfit: "LaplacePosterior",
-        include_true_params: bool = True,
+        true_params: Optional[Parameters] = None,
+        prior_mu: Optional[Parameters] = None,
+        prior_sigma: Optional[Parameters] = None,
+        prior_pdf_interval: Optional[Tuple[float, float]] = None,
         ncols: int = 2,
         fig_size=(12, 14),
         show: bool = True,
@@ -77,10 +72,16 @@ class LaplacePosteriorPlotter:
             ax.set_yticks([])
 
             # Prior
-            prior = cls._prior_dist_for(name)
-            x_prior = np.linspace(prior.ppf(0.001), prior.ppf(0.999), 500)
-            y_prior = prior.pdf(x_prior)
-            ax.plot(x_prior, y_prior, label="Prior (log-normal)", color="blue", linewidth=1)
+            if prior_mu is not None and prior_sigma is not None:
+                if prior_pdf_interval is None:
+                    prior_pdf_interval = (0.001, 0.999)
+                # get the parameter corresponding to name
+                mu0 = prior_mu.get_from_iterator_name(name)
+                sigma0 = prior_sigma.get_from_iterator_name(name)
+                prior = cls._prior_dist_for(mu0, sigma0)
+                x_prior = np.linspace(prior.ppf(prior_pdf_interval[0]), prior.ppf(prior_pdf_interval[1]), 500)
+                y_prior = prior.pdf(x_prior)
+                ax.plot(x_prior, y_prior, label="Prior (log-normal)", color="blue", linewidth=1)
 
             # Posterior (Gaussian, physical units)
             g = gauss_dists[i]
@@ -98,8 +99,8 @@ class LaplacePosteriorPlotter:
             # Markers
             mu_post = float(lfit.theta_phys[i].cpu().numpy())  # MAP in physical units
             ax.axvline(mu_post, color="purple", linestyle="-.", label="MAP Estimate", linewidth=1)
-            if include_true_params:
-                true_val = cls.TRUE_PARAMS.get_from_iterator_name(name)
+            if true_params is not None:
+                true_val = true_params.get_from_iterator_name(name)
                 ax.axvline(true_val, color="red", linestyle="--", label="TRUE", linewidth=1)
 
             # optional: other run estimates (if you want to add later)
@@ -130,10 +131,12 @@ class LaplacePosteriorPlotter:
         label: str,
         style: str = "log-normal",  # or "gaussian"
         color: Optional[str] = None,
-        plot_prior: bool = True,
-        plot_true_params: bool = True,
+        prior_mu: Optional[float] = None,
+        prior_sigma: Optional[float] = None,
+        true_param: Optional[float] = None,
         show_map_marker: bool = True,
         marker_kwargs: Optional[dict] = None,
+        prior_pdf_interval: Optional[Tuple[float, float]] = None
     ):
         """
         Plot one posterior PDF (Gaussian or LogNormal) for a single parameter.
@@ -150,11 +153,20 @@ class LaplacePosteriorPlotter:
         ax.set_yticks([])
 
         # Optional prior
-        if plot_prior:
-            prior = cls._prior_dist_for(param_name)
-            xp = np.linspace(prior.ppf(0.001), prior.ppf(0.999), 500)
+        if prior_mu is not None and prior_sigma is not None:
+            if prior_pdf_interval is None:
+                prior_pdf_interval = (0.001, 0.999)
+            prior = cls._prior_dist_for(prior_mu, prior_sigma)
+            xp = np.linspace(prior.ppf(prior_pdf_interval[0]), prior.ppf(prior_pdf_interval[1]), 500)
             yp = prior.pdf(xp)
-            ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
+            (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
+            line_color = line.get_color() if color is None else color
+            if show_map_marker:
+                y_prior = prior.pdf(prior_mu)
+                mk = {"marker": "s", "color": line_color, "s": 30, "zorder": 5}
+                if marker_kwargs:
+                    mk.update(marker_kwargs)
+                ax.scatter([prior_mu], [y_prior], **mk)
 
         # Choose posterior style
         if style == "gaussian":
@@ -179,9 +191,8 @@ class LaplacePosteriorPlotter:
                 mk.update(marker_kwargs)
             ax.scatter([mu_post], [y_map], **mk)
 
-        if plot_true_params:
-            true_val = cls.TRUE_PARAMS.get_from_iterator_name(param_name)
-            ax.axvline(true_val, color="red", linestyle="--", label="TRUE", linewidth=1)
+        if true_param is not None:
+            ax.axvline(true_param, color="red", linestyle="--", label="TRUE", linewidth=1)
 
         cls._format_axis(ax, param_name)
         return ax
@@ -190,12 +201,15 @@ class LaplacePosteriorPlotter:
     def plot_all_laplace_posteriors_grid(
         cls,
         lfits: Dict[str, "LaplacePosterior"],  # label -> posterior
-        plot_true_params: bool = True,
+        true_params: Optional[Parameters] = None,
+        prior_mu: Optional[Parameters] = None,
+        prior_sigma: Optional[Parameters] = None,
         skip_labels: Iterable[str] = ("ideal",),
         style: Literal["log-normal", "gaussian"] = "log-normal",
         ncols: int = 2,
         fig_size=(12, 14),
         show: bool = True,
+        prior_pdf_interval: Optional[Tuple[float, float]] = None,
     ):
         """
         Plot PDFs for all parameters in a grid, overlaying multiple Laplace posteriors.
@@ -218,14 +232,23 @@ class LaplacePosteriorPlotter:
             ax.set_yticks([])
 
             # Prior once
-            prior = cls._prior_dist_for(name)
-            xp = np.linspace(prior.ppf(0.001), prior.ppf(0.999), 500)
-            yp = prior.pdf(xp)
-            ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
+            if prior_mu is not None and prior_sigma is not None:
+                if prior_pdf_interval is None:
+                    prior_pdf_interval = (0.001, 0.999)
+                mu0 = prior_mu.get_from_iterator_name(name)
+                sigma0 = prior_sigma.get_from_iterator_name(name)
+                prior = cls._prior_dist_for(mu0, sigma0)
+                xp = np.linspace(prior.ppf(prior_pdf_interval[0]), prior.ppf(prior_pdf_interval[1]), 500)
+                yp = prior.pdf(xp)
+                (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
+                line_color = line.get_color()
+                y_prior = prior.pdf(mu0)
+                mk = {"marker": "s", "color": line_color, "s": 30, "zorder": 5, "label": "None"}
+                ax.scatter([mu0], [y_prior], **mk)
 
             # TRUE once
-            if plot_true_params:
-                true_val = cls.TRUE_PARAMS.get_from_iterator_name(name)
+            if true_params is not None:
+                true_val = true_params.get_from_iterator_name(name)
                 ax.axvline(true_val, color="red", linestyle="--", label="TRUE", linewidth=1)
 
             # Plot each posterior
@@ -240,8 +263,6 @@ class LaplacePosteriorPlotter:
                     label=lbl,
                     style=style,
                     color=None,
-                    plot_prior=False,  # already drawn
-                    plot_true_params=False,
                     show_map_marker=True,
                     marker_kwargs={"label": None},  # avoid duplicate legend entries
                 )

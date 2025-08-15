@@ -63,31 +63,41 @@ class TrainingHistory:
     def get_latest_parameters(self) -> Parameters:
         return self.get_parameters(len(self.df) - 1)
 
-    def get_best_idx(self, optimizer_type: Optional[str]=None) -> int:
+    def get_best_idx(self, optimizer_type: Optional[str]=None, latest_callback: bool = True) -> int:
         """Get the index of the best loss in the DataFrame."""
+        # check if the callback column exists in the DataFrame
+        if latest_callback and "callbacks" not in self.df.columns:
+            latest_callback = False
+
+        if latest_callback: 
+            # keep only the rows with the highest callback count
+            df_: pd.DataFrame = self.df[self.df["callbacks"] == self.df["callbacks"].max()]
+        else:
+            df_ = self.df
+
         # check if the optimizer type exists in the DataFrame
         if optimizer_type is None:
-            return self.df["loss"].idxmin()
+            return df_["loss"].idxmin()
 
         if "optimizer" not in self.df.columns:
             raise ValueError("Optimizer type not found in the DataFrame.")
         if optimizer_type not in self.df["optimizer"].unique():
             raise ValueError(f"Optimizer type '{optimizer_type}' not found in the DataFrame. Optimizer types present are: {self.df['optimizer'].unique()}")
-        return self.df[self.df["optimizer"] == optimizer_type]["loss"].idxmin()
+        return df_[df_["optimizer"] == optimizer_type]["loss"].idxmin()
 
-    def get_best_parameters(self, optimizer_type: Optional[str]=None) -> Parameters:
+    def get_best_parameters(self, optimizer_type: Optional[str]=None, latest_callback: bool = True) -> Parameters:
         """Get the best parameters for a specific optimizer type."""
-        best_idx = self.get_best_idx(optimizer_type)
+        best_idx = self.get_best_idx(optimizer_type, latest_callback)
         return self.get_parameters(best_idx)
 
-    def get_best_loss(self, optimizer_type: Optional[str]=None) -> float:
+    def get_best_loss(self, optimizer_type: Optional[str]=None, latest_callback: bool = True) -> float:
         """Get the best loss value for a specific optimizer type."""
-        best_idx = self.get_best_idx(optimizer_type)
+        best_idx = self.get_best_idx(optimizer_type, latest_callback)
         return self.df.at[best_idx, "loss"]
 
-    def get_best_epoch(self, optimizer_type: Optional[str]=None) -> int:
+    def get_best_epoch(self, optimizer_type: Optional[str]=None, latest_callback: bool = True) -> int:
         """Get the epoch corresponding to the best loss for a specific optimizer type."""
-        best_idx = self.get_best_idx(optimizer_type)
+        best_idx = self.get_best_idx(optimizer_type, latest_callback )
         if "epoch" not in self.df.columns:
             raise ValueError("Epoch column not found in the DataFrame.")
         return self.df.at[best_idx, "epoch"]
@@ -128,6 +138,7 @@ class TrainingHistory:
         epochs: List[int] = None,
         optimizer_history: List[str] = None,
         learning_rate: List[float] = None,
+        callbacks: List[int] = None
     ) -> "TrainingHistory":
         """Create a TrainingHistory from loss and parameter histories."""
         data = {
@@ -141,6 +152,8 @@ class TrainingHistory:
             df["optimizer"] = optimizer_history
         if epochs is not None:
             df["epoch"] = epochs
+        if callbacks is not None:
+            df["callbacks"] = callbacks
         return TrainingHistory(df)
 
     @classmethod

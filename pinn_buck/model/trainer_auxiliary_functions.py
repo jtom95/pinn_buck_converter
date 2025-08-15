@@ -19,7 +19,7 @@ from ..data_noise_modeling.covariance_matrix_function_archive import (
     chol,
     generate_residual_covariance_matrix,
 )
-from ..data_noise_modeling.jacobian_estimation import JacobianEstimatorBase
+from ..data_noise_modeling.jacobian_estimation import JacobianEstimatorBase, FwdBckJacobianEstimator
 
 def calculate_covariance_matrix(
     model: BaseBuckEstimator,
@@ -37,15 +37,27 @@ def calculate_covariance_matrix(
         ..., :2, :2
     ]  # keep a size of (T, 2, 2)
 
-    covariance_matrix = generate_residual_covariance_matrix(
-        data_covariance=data_covariance,
-        residual_covariance_func=residual_covariance_func,
-        jac=jac,
-        damp=damp_residual_covariance_matrix,
-        dtype=torch.float64,
-    )
+    # work also for fwd, bck models
+    
+    if jac.dim == 2: 
+        jac = jac[None, None, ...]
+    elif jac.dim == 3:
+        jac = jac[None,  ...]
+    else:
+        raise ValueError(f"Jacobian must have 2 or 3 dimensions, got {jac.dim()} dimensions.")
 
-    return covariance_matrix
+    cov_matrices = []
+
+    for jac_i in jac:    
+        covariance_matrix = generate_residual_covariance_matrix(
+            data_covariance=data_covariance,
+            residual_covariance_func=residual_covariance_func,
+            jac=jac_i,
+            damp=damp_residual_covariance_matrix,
+            dtype=torch.float64,
+        )
+        cov_matrices.append(covariance_matrix)
+    return torch.stack(cov_matrices, dim=0) if len(cov_matrices) > 1 else cov_matrices[0]
 
 
 def calculate_inflation_factor(
@@ -54,6 +66,7 @@ def calculate_inflation_factor(
     Lr: torch.Tensor, 
     residual_func: ResidualFunc,
     max_lags_vif: int = 500,
+    use_std_renorm: bool = True
 ) -> torch.Tensor:
 
     with torch.no_grad():
@@ -63,5 +76,8 @@ def calculate_inflation_factor(
         residuals = residual_func(preds, targets)
 
     diag = ResidualDiagnosticsGaussian(residuals)
-    vif = diag.quadloss_vif_from_residuals(Lr, max_lag=max_lags_vif)
+    vif = diag.quadloss_vif_from_residuals(Lr, max_lag=max_lags_vif, use_std_renorm=use_std_renorm)
     return vif
+
+
+###################################################################################

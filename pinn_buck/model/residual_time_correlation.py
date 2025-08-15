@@ -77,7 +77,7 @@ class ResidualDiagnosticsGaussian:
         return 1.0 + 2.0 * s2
 
     @torch.no_grad()
-    def quadloss_vif_from_residuals(self, L_r: torch.Tensor, max_lag: int) -> torch.Tensor:
+    def quadloss_vif_from_residuals(self, L_r: torch.Tensor, max_lag: int, use_std_renorm: bool = True) -> torch.Tensor:
         """
         Variance inflation factor (VIF) for the quadratic loss sum_n r_n^T Sigma_r^{-1} r_n.
 
@@ -97,28 +97,25 @@ class ResidualDiagnosticsGaussian:
         N, T, d = self.residuals.shape
         max_lag = max(1, min(max_lag, N - 1))
 
-        # Cholesky and whitening
-        rT = self.residuals.permute(1, 2, 0)  # (T, 2, N)
-        yT = torch.linalg.solve_triangular(L_r, rT, upper=False)  # (T, 2, N)
-        y = yT.permute(2, 0, 1)  # (N, T, 2)
+        rT = self.residuals.permute(1, 2, 0)                     # (T, d, N)
+        yT = torch.linalg.solve_triangular(L_r, rT, upper=False) # (T, d, N)
+        y  = yT.permute(2, 0, 1)                                 # (N, T, d)
 
-        # center
+        # center over time index N
         y = y - y.mean(dim=0, keepdim=True)
 
-        # normalize to unit variance per channel per transient
-        std = y.std(dim=0, unbiased=False, keepdim=True)  # (1, T, d)
-        y_norm = y / std.clamp_min(1e-12)
+        if use_std_renorm:
+            std = y.std(dim=0, unbiased=False, keepdim=True).clamp_min(1e-12)
+            y = y / std
 
-        s = torch.zeros((T,), dtype=self.residuals.dtype, device=self.residuals.device)
+        s = torch.zeros((T,), dtype=y.dtype, device=y.device)
         for k in range(1, max_lag + 1):
-            Y1 = y_norm[k:]
-            Y0 = y_norm[:-k]
-            Pk = torch.einsum("ntc,ntd->tcd", Y1, Y0) / (N - k)  # correlation matrix
-            nk = torch.linalg.norm(Pk, ord="fro", dim=(1, 2)) ** 2
-            s = s + nk
+            w = 1.0 - k / (max_lag + 1)                          # Bartlett
+            Pk = torch.einsum("ntc,ntd->tcd", y[k:], y[:-k]) / (N - k)
+            s = s + w * (torch.linalg.norm(Pk, ord="fro", dim=(1, 2)) ** 2)
 
         vif = 1.0 + (2.0 / d) * s
-        return vif  # (T,)
+        return vif
 
     @torch.no_grad()
     def plot_acf(
