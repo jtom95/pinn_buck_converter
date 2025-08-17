@@ -23,7 +23,7 @@ from pinn_buck.noise import add_noise_to_Measurement
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
 from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator, BuckParamEstimatorFwdBck
 from pinn_buck.model_results.history import TrainingHistory
-from pinn_buck.model.loss_function_archive import loss_whitened
+from pinn_buck.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
 
 from pinn_buck.io import LoaderH5
 
@@ -151,27 +151,27 @@ model = BuckParamEstimator(param_init = NOMINAL).to(device)
 
 
 covariance_matrices = []
-vi_factors = []
+jacobian_estimator = JacobianEstimator()
+
 for data_covariance in [(noise_power_ADC_i, noise_power_ADC_v), (noise_power_5_i, noise_power_5_v), (noise_power_10_i, noise_power_10_v)]:
-    covariance_matrix = calculate_covariance_matrix(
-        model=model,
-        X=X,
+    jac = jacobian_estimator.estimate_Jacobian(
+        X, model, 
+        number_of_samples=500, 
+        dtype=torch.float64
+    )[
+        ..., :2, :2
+    ]  # keep a size of (T, 2, 2)
+        
+    covariance_matrix = generate_residual_covariance_matrix(
         data_covariance=data_covariance,
-        jacobian_estimator=FwdBckJacobianEstimator(),
         residual_covariance_func=covariance_matrix_on_basic_residuals,
+        jac=jac,
+        dtype=torch.float64
     )
+    
+
     covariance_matrices.append(covariance_matrix)
-    
-    vif = calculate_inflation_factor(
-        model=model,
-        X=X,
-        Lr=chol(covariance_matrix, eps=1e-9),
-        residual_func=basic_residual,
-        max_lags_vif=1000, 
-        use_std_renorm=True
-    )
-    
-    vi_factors.append(vif)
+
 
 
 print("Covariance matrices and VIF factors calculated for ADC noise, 5 LSB noise, and 10 LSB noise.")
@@ -179,44 +179,8 @@ for idx in range(len(covariance_matrices)):
     # print(f"Group {idx+1} Covariance Matrix:")
     # print(covariance_matrices[idx])
     print(f"Group {idx+1}Variance Inflation Factor:")
-    print(vi_factors[idx])
+    print(covariance_matrices[idx])
     print("-" * 40)
-
-def update_loss_function(
-    model: BaseBuckEstimator, 
-    map_loss: MAPLoss,
-    X: torch.Tensor, 
-    data_covariance: torch.Tensor, 
-    jacobian_estimator: JacobianEstimatorBase,
-    residual_func,
-    residual_covariance_func,
-    max_lags_vif: int = 500,
-    )->MAPLoss:
-    
-    map_loss: MAPLoss = map_loss
-    
-    covariance_matrix = calculate_covariance_matrix(
-        model=model,
-        X=X,
-        data_covariance=data_covariance,
-        jacobian_estimator=jacobian_estimator,
-        residual_covariance_func=residual_covariance_func
-    )
-    
-    Lr = chol(covariance_matrix, eps=1e-9)
-
-    vif = calculate_inflation_factor(
-        model=model,
-        X=X,
-        Lr=Lr,
-        residual_func=residual_func,
-        max_lags_vif=max_lags_vif
-    )
-    
-    return map_loss.clone(
-        L=Lr,
-        weight_likelihood_loss= 1 / torch.median(vif)
-    )
 
 # print the covariance matrices for each transient
 
@@ -225,21 +189,17 @@ def print_transient_covariance_matrices(covariance_matrices: torch.Tensor):
         print(f"Transient {i+1} Covariance Matrix:")
         print(covariance_matrices[i])
 
-for name, matrices, vif in zip(["ADC noise", "5 LSB noise", "10 LSB noise"], covariance_matrices, vi_factors):
+for name, matrices in zip(["ADC noise", "5 LSB noise", "10 LSB noise"], covariance_matrices):
     print(f"Covariance matrices for {name}:")
     print_transient_covariance_matrices(matrices)
-    print(f"Variance Inflation Factor for {name}:")
-    print(vif)
     print("-" * 40)
 
-l_dict = {key: chol(cov_matrix) for key, cov_matrix in zip([1, 3, 4], covariance_matrices)}
-data_cov_dict = {
-    key: data_covariance 
-    for key, data_covariance in 
-    zip(
-        [1, 3, 4], [noise_power_ADC_i, noise_power_5_i, noise_power_10_i]
-        )
-    }
+l_dict = {
+    key: 
+        chol(cov_matrix) 
+        for key, cov_matrix in zip([1, 3, 4], covariance_matrices)
+        }
+
 
 # %%
 from typing import Dict
@@ -252,8 +212,8 @@ from pinn_buck.model.map_loss import MAPLoss
 
 set_seed(123)
 device = "cpu"
-out_dir = Path.cwd() / "RESULTS" / "Bayesian" / "FullSigma_MAP1"
-
+out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD"
+out_dir.mkdir(parents=True, exist_ok=True)
 
 run_configs = TrainingConfigs(
     lr_adam=1e-3,
@@ -306,40 +266,15 @@ for idx, group_number in enumerate(l_dict.keys()):
     X = torch.tensor(io.M.data, device=device)
     model = BuckParamEstimator(param_init = NOMINAL).to(device)
 
+    L = l_dict[group_number]
+    
     map_loss = MAPLoss(
         initial_params=NOMINAL,
         initial_sigma=rel_tolerance_to_sigma(REL_TOL),
-        loss_likelihood_function=loss_whitened,
+        loss_likelihood_function=loss_whitened,  # loss function for the forward-backward pass
         residual_function=basic_residual,
-    )
-
-    map_loss = update_loss_function(
-        model, 
-        map_loss,
-        X=X, 
-        data_covariance=data_cov_dict[group_number],
-        jacobian_estimator=JacobianEstimator(),
-        residual_func=basic_residual,
-        residual_covariance_func=covariance_matrix_on_basic_residuals,
-        max_lags_vif=500
-    )
-
-    def update_loss_callback(
-        current_model: BaseBuckEstimator,
-        current_map_loss: MAPLoss,
-        current_X: torch.Tensor
-    ) -> Callable:
-        updated_map_loss = update_loss_function(
-            model=current_model,
-            map_loss=current_map_loss,
-            X=current_X,
-            data_covariance=data_cov_dict[group_number],
-            jacobian_estimator=JacobianEstimator(),
-            residual_func=basic_residual,
-            residual_covariance_func=covariance_matrix_on_basic_residuals,
-            max_lags_vif=500,
-        )
-        return updated_map_loss
+        L=L,  # Cholesky factor of the diagonal noise covariance matrix
+    ).likelihood
 
     trainer = Trainer(
         model=model,
@@ -349,10 +284,7 @@ for idx, group_number in enumerate(l_dict.keys()):
     )
 
     trainer.fit(
-        X=X,
-        update_loss_callback=update_loss_callback,
-        update_every_adam=2500,
-        update_every_lbfgs=30
+        X=X
     )
 
     ### fit a Laplace Approximator for the posterior
@@ -364,70 +296,14 @@ for idx, group_number in enumerate(l_dict.keys()):
         damping=1e-7,
     )
     laplace_posterior = laplace_posterior_approx.fit(X)
+    laplace_posterior.save(out_dir / f"laplace_posterior_{group_name}.json")
 
     laplace_posteriors[group_name] = laplace_posterior
     trained_models[group_name] = trainer.optimized_model()
     trained_runs[group_name] = trainer.history
-
-    # print("Evaluating Test Losses")
-    # # test the loss function by evaluating the loss for the true parameters
-    # loss_diag_ideal = trainer.evaluate_loss(
-    #     X=X,
-    #     loss_fn=build_map_loss(
-    #         initial_params=NOMINAL,
-    #         initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-    #         loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-    #         L=chol_L,  # Cholesky factor of the diagonal noise covariance matrix
-    #         weight_prior_loss=0.
-    #     ),
-    #     parameter_guess=TRUE_PARAMS
-    # )
-
-    # loss_full_ideal = trainer.evaluate_loss(
-    #     X=X,
-    #     loss_fn=build_map_loss(
-    #         initial_params=NOMINAL,
-    #         initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-    #         loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-    #         L=chol_L_full,  # full noise covariance matrix
-    #         weight_prior_loss=0.
-    #     ),
-    #     parameter_guess=TRUE_PARAMS,
-    # )
-
-    # loss_full_best_Adams = trainer.evaluate_loss(
-    #     X=X,
-    #     loss_fn=build_map_loss(
-    #         initial_params=NOMINAL,
-    #         initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-    #         loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-    #         L=chol_L_full,  # full noise covariance matrix
-    #         weight_prior_loss=0.
-    #     ),
-    #     parameter_guess=trainer.history.get_best_parameters('Adam')
-    # )
-
-    # loss_best_BFGS = trainer.evaluate_loss(
-    #     X=X,
-    #     loss_fn=build_map_loss(
-    #         initial_params=NOMINAL,
-    #         initial_uncertainty=rel_tolerance_to_sigma(REL_TOL),
-    #         loss_likelihood_function=fw_bw_loss_whitened,  # loss function for the forward-backward pass
-    #         L=chol_L_full,  # full noise covariance matrix
-    #         weight_prior_loss=0.
-    #     ),
-    #     parameter_guess=trainer.history.get_best_parameters('LBFGS')
-    # )
-
-    # print(f"True Param Loss for {group_name} (diagonal noise): {loss_diag_ideal:.6e} vs best found: {trainer.history.get_best_loss('Adam'):.6e}")
-    # print(f"True Param Loss for {group_name} (full noise): {loss_full_ideal:.6e} vs best found: {trainer.history.get_best_loss('LBFGS'):.6e}")
-
-    # TEMPLATE = "\t{idx}) {label:<40}{value:>12.6e}"
-    # print("FULL NOISE", group_name + ":")
-    # print(TEMPLATE.format(idx=1, label="Loss for TRUE PARAMETERS:", value=loss_full_ideal))
-    # print(TEMPLATE.format(idx=3, label="Loss for best with DIAGONAL COVARIANCE:",  value=loss_full_best_Adams))
-    # print(TEMPLATE.format(idx=2, label="Loss for best with FULL COVARIANCE:", value=loss_best_BFGS))
-
+    
+    trainer.history.get_best_parameters().save(out_dir / f"best_params_{group_name}.json")
+    trainer.history.save_to_csv(out_dir / f"history_{group_name}.csv")
     print("\n \n \n")
 
 

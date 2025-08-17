@@ -115,11 +115,11 @@ class MAPLoss:
 
     @property
     def likelihood(self) -> "MAPLoss":
-        return self.clone(weight_likelihood_loss=1.0, weight_prior_loss=0.0)
+        return self.clone(weight_prior_loss=0.0)
 
     @property
     def prior(self) -> "MAPLoss":
-        return self.clone(weight_likelihood_loss=0.0, weight_prior_loss=1.0)
+        return self.clone(weight_likelihood_loss=0.0)
 
 
 ## Create MAP loss function for training

@@ -446,6 +446,7 @@ for idx, group_number in enumerate(l_dict.keys()):
         damping=1e-7,
     )
     laplace_posterior = laplace_posterior_approx.fit(X)
+    laplace_posterior.save(out_dir / f"laplace_posterior_{group_name}.json")
 
 
 

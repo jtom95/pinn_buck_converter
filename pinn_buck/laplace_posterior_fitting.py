@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, List, Literal, Union
+from typing import Callable, List, Literal, Union, Dict
 import json
 from pathlib import Path
 
@@ -14,7 +14,7 @@ from .model.map_loss import MAPLoss
 from .config import Parameters
 from .constants import ParameterConstants
 from .model.model_param_estimator import BaseBuckEstimator
-
+from .config import Parameters
 
 def _sigma_to_quantiles(n_sigma: float):
     """
@@ -146,6 +146,14 @@ class LaplacePosterior:
         Tensors are stored as nested lists (CPU, float64).
         """
         path = Path(path)
+        
+        # if it doesn't end in .laplace.json add it. If it just finishes in .json make it .laplace.json
+        if not path.name.endswith(".laplace.json"):
+            if path.name.endswith(".json"):
+                path = path.with_name(path.stem + ".laplace.json")
+            else:
+                path = path.with_suffix(".laplace.json")
+
         data = {
             "theta_log": self.theta_log.detach().cpu().numpy().tolist(),
             "Sigma_log": self.Sigma_log.detach().cpu().numpy().tolist(),

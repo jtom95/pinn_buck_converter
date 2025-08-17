@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Dict, Iterable, Optional, Literal, Tuple
+from typing import Dict, Iterable, Optional, Literal, Tuple, Union
 from scipy.stats import lognorm, norm
 from pinn_buck.constants import ParameterConstants
 
@@ -8,6 +8,39 @@ from typing import Protocol, runtime_checkable
 
 from .laplace_posterior_fitting import LaplacePosterior
 from .config import Parameters
+
+
+AxesLike = Union[plt.Axes, np.ndarray]
+
+
+def _coerce_axes_grid(ax: Optional[AxesLike], nrows: int, ncols: int, fig_size):
+    """
+    Return (fig, axes2d, axes_flat).
+    If ax is None -> create fig,axes.
+    If ax is a single Axes and nrows*ncols==1 -> wrap it.
+    If ax is a 2D array of Axes with correct shape -> use it.
+    """
+    if ax is None:
+        fig, axes2d = plt.subplots(nrows=nrows, ncols=ncols, figsize=fig_size)
+    else:
+        # ax can be a single Axes (only valid for 1x1) or a np.ndarray of Axes with shape (nrows, ncols)
+        if isinstance(ax, plt.Axes):
+            if nrows != 1 or ncols != 1:
+                raise ValueError(f"Got a single Axes but need a grid {nrows}x{ncols}.")
+            axes2d = np.array([[ax]])
+            fig = ax.figure
+        else:
+            if not isinstance(ax, np.ndarray):
+                raise TypeError(
+                    f"`ax` must be a matplotlib Axes or ndarray of Axes, got {type(ax)}"
+                )
+            if ax.shape != (nrows, ncols):
+                raise ValueError(f"Axes array has shape {ax.shape}, expected {(nrows, ncols)}")
+            axes2d = ax
+            # take the figure from the first Axes object
+            fig = axes2d.flat[0].figure
+    axes_flat = axes2d.ravel()
+    return fig, axes2d, axes_flat
 
 
 @runtime_checkable
@@ -42,7 +75,7 @@ class LaplacePosteriorPlotter:
             ax.set_xlabel("[μF]")
 
     # ---------- public API ----------
-
+    @classmethod
     def plot_laplace_posteriors(
         cls,
         lfit: "LaplacePosterior",
@@ -52,16 +85,17 @@ class LaplacePosteriorPlotter:
         prior_pdf_interval: Optional[Tuple[float, float]] = None,
         ncols: int = 2,
         fig_size=(12, 14),
-        show: bool = True,
+        ax: Optional[plt.Axes] = None,
+        add_legend: bool = True
     ):
         """
         For a single LaplacePosterior, plot prior (log-normal) and Laplace posteriors
         (Gaussian + LogNormal) for each parameter.
         """
+
         param_names = list(lfit.param_names)
         nrows = int(np.ceil(len(param_names) / ncols))
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=fig_size)
-        axes = np.atleast_1d(axes).ravel()
+        fig, axes2d, axes = _coerce_axes_grid(ax, nrows, ncols, fig_size)
 
         gauss_dists = lfit.gaussian_approx
         logn_dists = lfit.lognormal_approx
@@ -73,8 +107,8 @@ class LaplacePosteriorPlotter:
 
             # Prior
             if prior_mu is not None and prior_sigma is not None:
-                if prior_pdf_interval is None:
-                    prior_pdf_interval = (0.001, 0.999)
+                q_lo, q_hi = prior_pdf_interval or (0.001, 0.999)
+                xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
                 # get the parameter corresponding to name
                 mu0 = prior_mu.get_from_iterator_name(name)
                 sigma0 = prior_sigma.get_from_iterator_name(name)
@@ -110,7 +144,8 @@ class LaplacePosteriorPlotter:
             #         ax.axvline(est, linestyle=":", label=f"{lbl} estimate", linewidth=1)
 
             cls._format_axis(ax, name)
-            ax.legend(fontsize="x-small", loc="upper right")
+            if add_legend:
+                ax.legend(fontsize="x-small", loc="upper right")
 
         # hide any extra axes
         for j in range(len(param_names), len(axes)):
@@ -119,24 +154,26 @@ class LaplacePosteriorPlotter:
         fig.suptitle("Prior (log-normal) and Laplace Posterior for Each Parameter", fontsize=16)
         fig.tight_layout()
         fig.subplots_adjust(top=0.95)
-        if show:
-            plt.show()
         return fig, axes
 
+    @classmethod
     def plot_single_laplace_posterior(
         cls,
         param_name: str,
         lfit: "LaplacePosterior",
         ax: plt.Axes,
         label: str,
-        style: str = "log-normal",  # or "gaussian"
+        distribution_type: Literal["log-normal", "gaussian"] = "log-normal",
         color: Optional[str] = None,
+        linestyle: str = "-",
+        linewidth: float = 1.0,
         prior_mu: Optional[float] = None,
         prior_sigma: Optional[float] = None,
         true_param: Optional[float] = None,
         show_map_marker: bool = True,
         marker_kwargs: Optional[dict] = None,
-        prior_pdf_interval: Optional[Tuple[float, float]] = None
+        prior_pdf_interval: Optional[Tuple[float, float]] = None,
+        add_legend: bool = True,
     ):
         """
         Plot one posterior PDF (Gaussian or LogNormal) for a single parameter.
@@ -154,10 +191,9 @@ class LaplacePosteriorPlotter:
 
         # Optional prior
         if prior_mu is not None and prior_sigma is not None:
-            if prior_pdf_interval is None:
-                prior_pdf_interval = (0.001, 0.999)
             prior = cls._prior_dist_for(prior_mu, prior_sigma)
-            xp = np.linspace(prior.ppf(prior_pdf_interval[0]), prior.ppf(prior_pdf_interval[1]), 500)
+            q_lo, q_hi = prior_pdf_interval or (0.001, 0.999)
+            xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
             yp = prior.pdf(xp)
             (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
             line_color = line.get_color() if color is None else color
@@ -169,17 +205,19 @@ class LaplacePosteriorPlotter:
                 ax.scatter([prior_mu], [y_prior], **mk)
 
         # Choose posterior style
-        if style == "gaussian":
+        if distribution_type == "gaussian":
             dist = lfit.gaussian_approx[idx]
             mean, std = dist.mean(), dist.std()
             x = np.linspace(mean - 4 * std, mean + 4 * std, 500)
-        elif style == "log-normal":
+        elif distribution_type == "log-normal":
             dist = lfit.lognormal_approx[idx]
             x = np.linspace(dist.ppf(0.001), dist.ppf(0.999), 500)
         else:
-            raise ValueError("style must be 'gaussian' or 'log-normal'.")
+            raise ValueError("distribution_type must be 'gaussian' or 'log-normal'.")
 
-        (line,) = ax.plot(x, dist.pdf(x), label=label, color=color, linewidth=1)
+        (line,) = ax.plot(
+            x, dist.pdf(x), label=label, color=color, linewidth=linewidth, linestyle=linestyle
+            )
         line_color = line.get_color() if color is None else color
 
         # MAP marker (at physical MAP value)
@@ -195,6 +233,8 @@ class LaplacePosteriorPlotter:
             ax.axvline(true_param, color="red", linestyle="--", label="TRUE", linewidth=1)
 
         cls._format_axis(ax, param_name)
+        if add_legend:
+            ax.legend(fontsize="x-small", loc="upper right")
         return ax
 
     @classmethod
@@ -205,11 +245,15 @@ class LaplacePosteriorPlotter:
         prior_mu: Optional[Parameters] = None,
         prior_sigma: Optional[Parameters] = None,
         skip_labels: Iterable[str] = ("ideal",),
-        style: Literal["log-normal", "gaussian"] = "log-normal",
+        distribution_type: Literal["log-normal", "gaussian"] = "log-normal",
+        ax: Optional[plt.Axes] = None,
+        color: Optional[str] = None,
+        linestyle: str = "-",
+        linewidth: float = 1.0,
         ncols: int = 2,
         fig_size=(12, 14),
-        show: bool = True,
         prior_pdf_interval: Optional[Tuple[float, float]] = None,
+        add_legend: bool = True
     ):
         """
         Plot PDFs for all parameters in a grid, overlaying multiple Laplace posteriors.
@@ -222,8 +266,7 @@ class LaplacePosteriorPlotter:
         param_names = list(first.param_names)
 
         nrows = int(np.ceil(len(param_names) / ncols))
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=fig_size)
-        axes = np.atleast_1d(axes).ravel()
+        fig, axes2d, axes = _coerce_axes_grid(ax, nrows, ncols, fig_size)
 
         for i, name in enumerate(param_names):
             ax = axes[i]
@@ -233,12 +276,11 @@ class LaplacePosteriorPlotter:
 
             # Prior once
             if prior_mu is not None and prior_sigma is not None:
-                if prior_pdf_interval is None:
-                    prior_pdf_interval = (0.001, 0.999)
                 mu0 = prior_mu.get_from_iterator_name(name)
                 sigma0 = prior_sigma.get_from_iterator_name(name)
                 prior = cls._prior_dist_for(mu0, sigma0)
-                xp = np.linspace(prior.ppf(prior_pdf_interval[0]), prior.ppf(prior_pdf_interval[1]), 500)
+                q_lo, q_hi = prior_pdf_interval or (0.001, 0.999)
+                xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
                 yp = prior.pdf(xp)
                 (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
                 line_color = line.get_color()
@@ -256,19 +298,22 @@ class LaplacePosteriorPlotter:
                 if lbl in set(skip_labels):
                     continue
                 cls.plot_single_laplace_posterior(
-                    cls=cls,
                     param_name=name,
                     lfit=lfit,
                     ax=ax,
                     label=lbl,
-                    style=style,
-                    color=None,
+                    distribution_type=distribution_type,
+                    color=color,
+                    linestyle=linestyle,
+                    linewidth=linewidth,
                     show_map_marker=True,
                     marker_kwargs={"label": None},  # avoid duplicate legend entries
+                    add_legend=False,
                 )
 
             cls._format_axis(ax, name)
-            ax.legend(fontsize="x-small", loc="upper right")
+            if add_legend:
+                ax.legend(fontsize="x-small", loc="upper right")
 
         # hide extras
         for j in range(len(param_names), len(axes)):
@@ -277,6 +322,4 @@ class LaplacePosteriorPlotter:
         fig.suptitle("Laplace Posteriors", fontsize=16)
         fig.tight_layout()
         fig.subplots_adjust(top=0.95)
-        if show:
-            plt.show()
         return fig, axes

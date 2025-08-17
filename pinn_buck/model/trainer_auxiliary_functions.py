@@ -36,29 +36,15 @@ def calculate_covariance_matrix(
     )[
         ..., :2, :2
     ]  # keep a size of (T, 2, 2)
-
-    # work also for fwd, bck models
     
-    if jac.dim == 2: 
-        jac = jac[None, None, ...]
-    elif jac.dim == 3:
-        jac = jac[None,  ...]
-    else:
-        raise ValueError(f"Jacobian must have 2 or 3 dimensions, got {jac.dim()} dimensions.")
-
-    cov_matrices = []
-
-    for jac_i in jac:    
-        covariance_matrix = generate_residual_covariance_matrix(
+    covariance_matrix = generate_residual_covariance_matrix(
             data_covariance=data_covariance,
             residual_covariance_func=residual_covariance_func,
-            jac=jac_i,
+            jac=jac,
             damp=damp_residual_covariance_matrix,
             dtype=torch.float64,
         )
-        cov_matrices.append(covariance_matrix)
-    return torch.stack(cov_matrices, dim=0) if len(cov_matrices) > 1 else cov_matrices[0]
-
+    return covariance_matrix
 
 def calculate_inflation_factor(
     model: BaseBuckEstimator, 

@@ -170,15 +170,15 @@ class FwdBckJacobianEstimator(JacobianEstimatorBase):
         J = torch.autograd.functional.jacobian(local_fwd, vec, create_graph=False)  # (2,4)
         return J
 
-    def _check_model_compatibility(self, X: torch.Tensor):
-        if not isinstance(self.model, BaseBuckEstimator):
-            raise TypeError(f"Expected model of type BaseBuckEstimator, got {type(self.model)}")
+    def _check_model_compatibility(model: BaseBuckEstimator, X: torch.Tensor):
+        if not isinstance(model, BaseBuckEstimator):
+            raise TypeError(f"Expected model of type BaseBuckEstimator, got {type(model)}")
             # check if the number of dimensions is correct
-        pred = self.model(X)
-        if X.dim(pred) != 4:
-            raise ValueError(f"Expected 4D output, got shape {X.shape(pred)}")
-        if X.shape(pred)[0] != 2:
-            raise ValueError(f"Expected 2 batches, got shape {X.shape(pred)}")
+        pred: torch.Tensor = model(X)
+        if pred.dim() != 4:
+            raise ValueError(f"Expected 4D output, got shape {pred.shape}")
+        if pred.shape[0] != 2:
+            raise ValueError(f"Expected 2 batches, got shape {pred.shape}")
 
     @classmethod
     def estimate_Jacobian(
@@ -187,7 +187,7 @@ class FwdBckJacobianEstimator(JacobianEstimatorBase):
         model: BaseBuckEstimator,
         *,
         direction: Literal["forward", "backward"] = "forward",
-        by_series: bool = False,
+        by_series: bool = True,
         number_of_samples: Optional[int] = None,
         dtype: torch.dtype = torch.float32,
         rng: Optional[torch.Generator] = None,
@@ -221,7 +221,7 @@ class FwdBckJacobianEstimator(JacobianEstimatorBase):
             ``(2,4)`` if ``by_series=False`` else ``(T,2,4)``.
         """
 
-        cls._check_model_compatibility(X)
+        cls._check_model_compatibility(model, X)
 
         B, T, _ = X.shape
         max_idx = B - 2  # last valid t

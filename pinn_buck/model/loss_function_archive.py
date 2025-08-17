@@ -58,6 +58,7 @@ def loss_whitened_fwbk(
     residual_func: ResidualFunc,
     L_fwd: torch.Tensor,
     L_bck: torch.Tensor,
+    sum_result: bool = True
 ) -> torch.Tensor:
     
     fwd_pred, bck_pred = pred
@@ -68,6 +69,7 @@ def loss_whitened_fwbk(
         fwd_target,
         residual_func,
         L_fwd,
+        sum_result=sum_result
     )
 
     loss_bck = loss_whitened(
@@ -75,9 +77,10 @@ def loss_whitened_fwbk(
         bck_target,
         residual_func,
         L_bck,
+        sum_result=sum_result
     )
 
-    return loss_fwd + loss_bck
+    return (loss_fwd + loss_bck) / 2
 
 
 def loss_whitened_r_delta(
