@@ -26,28 +26,34 @@ PRIOR_SIGMA = rel_tolerance_to_sigma(
 # from pinn_buck.plot_aux import place_shared_legend
 
 directory_dict = {
-    "Fwd&Bck": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD&BCK",
-    "Fwd": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD",
+    "Fwd2": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD2",
+    "Fwd1": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD1",
 }
 
-# rc = ResultsComparerTwo.from_dirs(
-#     directory_dict
-# )
+rc = ResultsComparerTwo.from_dirs(
+    directory_dict
+)
 
-# # Choose the labels you care about (ints map via the default dict; strings work too)
-# labels = ("ADC_error", "5 noise", "10 noise")
+# Choose the labels you care about (ints map via the default dict; strings work too)
+labels = ("ADC_error", "5 noise", "10 noise")
 
-# # Final % error comparison (side-by-side)
-# fig, ax = rc.plot_comparison(
-#     labels=labels, target=TRUE_PARAMS, select_lowest_loss=True, legend_bbox_to_anchor_vertical=-0.1
-# )
+# Final % error comparison (side-by-side)
+fig, ax = rc.plot_comparison(
+    labels=labels, target=TRUE_PARAMS, select_lowest_loss=True, legend_bbox_to_anchor_vertical=-0.1
+)
 
-# # Optional: tracked parameters for specific curves
+# Optional: tracked parameters for specific curves
 
 
-# fig, axes = rc.plot_tracked(target=TRUE_PARAMS, labels=labels)
+fig, axes = rc.plot_tracked(target=TRUE_PARAMS, labels=labels)
 
 laplace_comparer = LaplaceResultsComparer.from_dirs(directory_dict)
-laplace_comparer.plot_posteriors_grid(ncols=3, prior_mu=NOMINAL, prior_sigma=PRIOR_SIGMA, true_params=TRUE_PARAMS,)
-
+laplace_comparer.plot_posteriors_grid(
+    skip_labels=("ADC_error",),
+    ncols=4, 
+    # prior_mu=NOMINAL, 
+    # prior_sigma=PRIOR_SIGMA, 
+    true_params=TRUE_PARAMS,
+    )
+# laplace_comparer.plot_param_overlay("Rdson", prior_mu=NOMINAL, prior_sigma=PRIOR_SIGMA, true_params=TRUE_PARAMS,)
 plt.show()

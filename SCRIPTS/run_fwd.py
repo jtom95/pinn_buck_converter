@@ -196,8 +196,8 @@ for name, matrices in zip(["ADC noise", "5 LSB noise", "10 LSB noise"], covarian
 
 l_dict = {
     key: 
-        chol(torch.eye(2))
-        # chol(cov_matrix) 
+        # chol(torch.eye(2))
+        chol(cov_matrix) 
         for key, cov_matrix in zip([1, 3, 4], covariance_matrices)
         }
 
@@ -213,7 +213,7 @@ from pinn_buck.model.map_loss import MAPLoss
 
 set_seed(123)
 device = "cpu"
-out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_EYE"
+out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 run_configs = TrainingConfigs(

@@ -147,31 +147,47 @@ io = LoaderH5(db_dir, h5filename)
 ### the jacobians are independent of the measurement so we can calculate them once
 io.load("10 noise")
 X = torch.tensor(io.M.data, device=device)
-model = BuckParamEstimator(param_init = NOMINAL).to(device)
+model = BuckParamEstimatorFwdBck(param_init = NOMINAL).to(device)
 
 
 covariance_matrices = []
-jacobian_estimator = JacobianEstimator()
+jacobian_estimator = FwdBckJacobianEstimator()
 
 for data_covariance in [(noise_power_ADC_i, noise_power_ADC_v), (noise_power_5_i, noise_power_5_v), (noise_power_10_i, noise_power_10_v)]:
-    jac = jacobian_estimator.estimate_Jacobian(
+    jac_fwd = jacobian_estimator.estimate_Jacobian(
         X, model, 
+        direction="forward",
         number_of_samples=500, 
         dtype=torch.float64
     )[
         ..., :2, :2
     ]  # keep a size of (T, 2, 2)
-        
-    covariance_matrix = generate_residual_covariance_matrix(
+
+    jac_bck = jacobian_estimator.estimate_Jacobian(
+        X, model, 
+        direction="backward",
+        number_of_samples=500, 
+        dtype=torch.float64
+    )[
+        ..., :2, :2
+    ]
+    
+    cov_matrix_fwd = generate_residual_covariance_matrix(
         data_covariance=data_covariance,
         residual_covariance_func=covariance_matrix_on_basic_residuals,
-        jac=jac,
+        jac=jac_fwd,
         dtype=torch.float64
     )
     
+    cov_matrix_bck = generate_residual_covariance_matrix(
+        data_covariance=data_covariance,
+        residual_covariance_func=covariance_matrix_on_basic_residuals,
+        jac=jac_bck,
+        dtype=torch.float64
+    )
 
+    covariance_matrix = torch.stack([cov_matrix_fwd, cov_matrix_bck], dim=0)  # shape (2, T, 2, 2)
     covariance_matrices.append(covariance_matrix)
-
 
 
 print("Covariance matrices and VIF factors calculated for ADC noise, 5 LSB noise, and 10 LSB noise.")
@@ -194,12 +210,14 @@ for name, matrices in zip(["ADC noise", "5 LSB noise", "10 LSB noise"], covarian
     print_transient_covariance_matrices(matrices)
     print("-" * 40)
 
-l_dict = {
-    key: 
-        chol(torch.eye(2))
-        # chol(cov_matrix) 
+l_dict = {key: dict(
+    # fwd = chol(torch.eye(2)),
+    # bck = chol(torch.eye(2)),
+    fwd=chol(cov_matrix[0]),
+    bck=chol(cov_matrix[1])
+    )
         for key, cov_matrix in zip([1, 3, 4], covariance_matrices)
-        }
+    }
 
 
 # %%
@@ -213,7 +231,7 @@ from pinn_buck.model.map_loss import MAPLoss
 
 set_seed(123)
 device = "cpu"
-out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_EYE"
+out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD&BCK"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 run_configs = TrainingConfigs(
@@ -265,16 +283,17 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     # Train the model on the noisy measurement
     X = torch.tensor(io.M.data, device=device)
-    model = BuckParamEstimator(param_init = NOMINAL).to(device)
+    model = BuckParamEstimatorFwdBck(param_init = NOMINAL).to(device)
 
-    L = l_dict[group_number]
-    
+    L_fwd, L_bck = l_dict[group_number]["fwd"], l_dict[group_number]["bck"]
+
     map_loss = MAPLoss(
         initial_params=NOMINAL,
         initial_sigma=rel_tolerance_to_sigma(REL_TOL),
-        loss_likelihood_function=loss_whitened,  # loss function for the forward-backward pass
+        loss_likelihood_function=loss_whitened_fwbk,  # loss function for the forward-backward pass
         residual_function=basic_residual,
-        L=L,  # Cholesky factor of the diagonal noise covariance matrix
+        L_fwd=L_fwd,  # Cholesky factor of the diagonal noise covariance matrix
+        L_bck=L_bck,  # Cholesky factor of the diagonal noise covariance matrix
     ).likelihood
 
     trainer = Trainer(
@@ -302,7 +321,6 @@ for idx, group_number in enumerate(l_dict.keys()):
     laplace_posteriors[group_name] = laplace_posterior
     trained_models[group_name] = trainer.optimized_model()
     trained_runs[group_name] = trainer.history
-    
     trainer.history.get_best_parameters().save(out_dir / f"best_params_{group_name}.json")
     trainer.history.save_to_csv(out_dir / f"history_{group_name}.csv")
     print("\n \n \n")

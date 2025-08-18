@@ -12,7 +12,7 @@ from .covariance_matrix_config import (
     )
 
 
-def covariance_matrix_on_delta_residuals(
+def covariance_matrix_on_residuals_d1(
     data_covariance: torch.Tensor,
     jac_fwd: torch.Tensor,
     jac_bck: torch.Tensor,
@@ -41,6 +41,37 @@ def covariance_matrix_on_delta_residuals(
 
     Sigma = jf_p @ dc @ jf_p.mT + jb_p @ dc @ jb_p.mT
     return Sigma
+
+
+def covariance_matrix_on_residuals_d2(
+    data_covariance: torch.Tensor,
+    jac_fwd: torch.Tensor,
+    jac_bck: torch.Tensor,
+    *,
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    """
+    Covariance for Δ-residuals built from forward/backward predictions:
+        r = (fwd - bck) - (target_fwd - target_bck)
+    Under independent measurement noise with covariance Σ_x at each side,
+    a linearization gives:
+        Cov[r] ≈ (J_f + I) Σ_x (J_f + I)ᵀ + (J_b + I) Σ_x (J_b + I)ᵀ
+
+    Shapes:
+      data_covariance: (..., 2, 2) or (2, 2)
+      jac_fwd, jac_bck: (..., 2, 2) or (2, 2)
+    """
+    dc = data_covariance.to(dtype)
+    jf = jac_fwd.to(dtype)
+    jb = jac_bck.to(dtype)
+
+    # Broadcast to common batch if provided
+    I = torch.eye(2, dtype=dtype, device=dc.device).expand(dc.shape[:-2] + (2, 2))
+    jf_p = jf - I
+    jb_p = jb - I
+
+    Sigma = jf_p @ dc @ jf_p.mT + jb_p @ dc @ jb_p.mT
+    return Sigma / 4
 
 
 def covariance_matrix_on_basic_residuals(

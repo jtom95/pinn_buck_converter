@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from typing import Dict, Iterable, Optional, Literal, Tuple, Union
 from scipy.stats import lognorm, norm
 from pinn_buck.constants import ParameterConstants
+import itertools
 
 from typing import Protocol, runtime_checkable
 
@@ -61,6 +62,25 @@ class LaplacePosteriorPlotter:
     # ---------- small helpers ----------
 
     @classmethod
+    def _safe_color_generator(cls):
+        """
+        Yield colors from matplotlib's prop_cycle, skipping red.
+        Wraps around indefinitely so it can be reused across subplots.
+        """
+        safe_colors = [
+            c
+            for c in plt.rcParams["axes.prop_cycle"].by_key()["color"]
+            if c.lower() not in ("r", "#ff0000", "#d62728")
+        ]
+        return itertools.cycle(safe_colors)
+
+    @classmethod
+    def get_safecolor(cls):
+        if not hasattr(cls, "_color_cycle"):
+            cls._color_cycle = cls._safe_color_generator()
+        return next(cls._color_cycle)
+
+    @classmethod
     def _prior_dist_for(cls, mu, sigma) -> RVLike:
         return lognorm(s=sigma, scale=mu)
 
@@ -73,6 +93,40 @@ class LaplacePosteriorPlotter:
         elif name == "C":
             ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x*1e6:.2f}"))
             ax.set_xlabel("[μF]")
+
+    @staticmethod
+    def plot_prior_only(
+        ax: plt.Axes,
+        mu: float,
+        sigma: float,
+        interval: Tuple[float, float] = (0.01, 0.99),
+        *,
+        color: Optional[str] = "black",
+        linestyle: str = "-",
+        linewidth: float = 2.0,
+        label: Optional[str] = "Prior (log-normal)",
+        show_marker: bool = True,
+        marker_kwargs: Optional[dict] = None,
+    ) -> plt.Axes:
+        """
+        Draw only the lognormal prior PDF on `ax`, without plotting any posterior.
+        - mu, sigma are the prior's parameters in physical space, consistent with your Parameters.
+        - interval is the (lo, hi) quantile range for the x-limits.
+        """
+        prior = lognorm(s=sigma, scale=mu)
+        lo, hi = interval
+        x = np.linspace(prior.ppf(lo), prior.ppf(hi), 500)
+        y = prior.pdf(x)
+        (line,) = ax.plot(x, y, color=color, linestyle=linestyle, linewidth=linewidth, label=label)
+
+        if show_marker:
+            y_mu = prior.pdf(mu)
+            mk = {"marker": "s", "color": line.get_color(), "s": 30, "zorder": 5}
+            if marker_kwargs:
+                mk.update(marker_kwargs)
+            ax.scatter([mu], [y_mu], **mk)
+
+        return ax
 
     # ---------- public API ----------
     @classmethod
@@ -107,15 +161,24 @@ class LaplacePosteriorPlotter:
 
             # Prior
             if prior_mu is not None and prior_sigma is not None:
-                q_lo, q_hi = prior_pdf_interval or (0.001, 0.999)
-                xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
-                # get the parameter corresponding to name
-                mu0 = prior_mu.get_from_iterator_name(name)
-                sigma0 = prior_sigma.get_from_iterator_name(name)
-                prior = cls._prior_dist_for(mu0, sigma0)
-                x_prior = np.linspace(prior.ppf(prior_pdf_interval[0]), prior.ppf(prior_pdf_interval[1]), 500)
-                y_prior = prior.pdf(x_prior)
-                ax.plot(x_prior, y_prior, label="Prior (log-normal)", color="blue", linewidth=1)
+                cls.plot_prior_only(
+                    ax=ax,
+                    mu=prior_mu.get_from_iterator_name(name),
+                    sigma=prior_sigma.get_from_iterator_name(name),
+                    interval=prior_pdf_interval,
+                    color="blue",
+                    label="Prior (log-normal)",
+                    linewidth=1,
+                )
+                # q_lo, q_hi = prior_pdf_interval or (0.001, 0.999)
+                # xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
+                # # get the parameter corresponding to name
+                # mu0 = prior_mu.get_from_iterator_name(name)
+                # sigma0 = prior_sigma.get_from_iterator_name(name)
+                # prior = cls._prior_dist_for(mu0, sigma0)
+                # x_prior = np.linspace(prior.ppf(prior_pdf_interval[0]), prior.ppf(prior_pdf_interval[1]), 500)
+                # y_prior = prior.pdf(x_prior)
+                # ax.plot(x_prior, y_prior, label="Prior (log-normal)", color="blue", linewidth=1)
 
             # Posterior (Gaussian, physical units)
             g = gauss_dists[i]
@@ -172,6 +235,7 @@ class LaplacePosteriorPlotter:
         true_param: Optional[float] = None,
         show_map_marker: bool = True,
         marker_kwargs: Optional[dict] = None,
+        pdf_interval: Optional[Tuple[float, float]] = None,
         prior_pdf_interval: Optional[Tuple[float, float]] = None,
         add_legend: bool = True,
     ):
@@ -191,18 +255,27 @@ class LaplacePosteriorPlotter:
 
         # Optional prior
         if prior_mu is not None and prior_sigma is not None:
-            prior = cls._prior_dist_for(prior_mu, prior_sigma)
-            q_lo, q_hi = prior_pdf_interval or (0.001, 0.999)
-            xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
-            yp = prior.pdf(xp)
-            (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
-            line_color = line.get_color() if color is None else color
-            if show_map_marker:
-                y_prior = prior.pdf(prior_mu)
-                mk = {"marker": "s", "color": line_color, "s": 30, "zorder": 5}
-                if marker_kwargs:
-                    mk.update(marker_kwargs)
-                ax.scatter([prior_mu], [y_prior], **mk)
+            cls.plot_prior_only(
+                ax=ax,
+                prior_mu=prior_mu,
+                prior_sigma=prior_sigma,
+                interval=prior_pdf_interval,
+                label="Prior (log-normal)",
+                color="black",
+                linewidth=2
+            )
+            # prior = cls._prior_dist_for(prior_mu, prior_sigma)
+            # q_lo, q_hi = prior_pdf_interval or (0.01, 0.99)
+            # xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
+            # yp = prior.pdf(xp)
+            # (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
+            # line_color = line.get_color() if color is None else color
+            # if show_map_marker:
+            #     y_prior = prior.pdf(prior_mu)
+            #     mk = {"marker": "s", "color": line_color, "s": 30, "zorder": 5}
+            #     if marker_kwargs:
+            #         mk.update(marker_kwargs)
+            #     ax.scatter([prior_mu], [y_prior], **mk)
 
         # Choose posterior style
         if distribution_type == "gaussian":
@@ -211,9 +284,12 @@ class LaplacePosteriorPlotter:
             x = np.linspace(mean - 4 * std, mean + 4 * std, 500)
         elif distribution_type == "log-normal":
             dist = lfit.lognormal_approx[idx]
-            x = np.linspace(dist.ppf(0.001), dist.ppf(0.999), 500)
+            q_lo, q_hi = pdf_interval or (0.01, 0.99)
+            x = np.linspace(dist.ppf(q_lo), dist.ppf(q_hi), 500)
         else:
             raise ValueError("distribution_type must be 'gaussian' or 'log-normal'.")
+
+        color = color or cls.get_safecolor()
 
         (line,) = ax.plot(
             x, dist.pdf(x), label=label, color=color, linewidth=linewidth, linestyle=linestyle
@@ -278,15 +354,24 @@ class LaplacePosteriorPlotter:
             if prior_mu is not None and prior_sigma is not None:
                 mu0 = prior_mu.get_from_iterator_name(name)
                 sigma0 = prior_sigma.get_from_iterator_name(name)
-                prior = cls._prior_dist_for(mu0, sigma0)
-                q_lo, q_hi = prior_pdf_interval or (0.001, 0.999)
-                xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
-                yp = prior.pdf(xp)
-                (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
-                line_color = line.get_color()
-                y_prior = prior.pdf(mu0)
-                mk = {"marker": "s", "color": line_color, "s": 30, "zorder": 5, "label": "None"}
-                ax.scatter([mu0], [y_prior], **mk)
+                cls.plot_prior_only(
+                    ax=ax,
+                    prior_mu=prior_mu,
+                    prior_sigma=prior_sigma,
+                    interval=prior_pdf_interval,
+                    label="Prior (log-normal)",
+                    color="black",
+                    linewidth=2
+                )
+                # prior = cls._prior_dist_for(mu0, sigma0)
+                # q_lo, q_hi = prior_pdf_interval or (0.01, 0.99)
+                # xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
+                # yp = prior.pdf(xp)
+                # (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
+                # line_color = line.get_color()
+                # y_prior = prior.pdf(mu0)
+                # mk = {"marker": "s", "color": line_color, "s": 30, "zorder": 5, "label": "None"}
+                # ax.scatter([mu0], [y_prior], **mk)
 
             # TRUE once
             if true_params is not None:
@@ -306,6 +391,7 @@ class LaplacePosteriorPlotter:
                     color=color,
                     linestyle=linestyle,
                     linewidth=linewidth,
+                    pdf_interval=prior_pdf_interval,
                     show_map_marker=True,
                     marker_kwargs={"label": None},  # avoid duplicate legend entries
                     add_legend=False,

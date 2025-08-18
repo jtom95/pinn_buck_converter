@@ -229,6 +229,7 @@ class LaplaceResultsComparer:
         distribution_type: Literal["log-normal", "gaussian"] = "log-normal",
         ncols: int = 2,
         fig_size=(10, 8),
+        pdf_interval: Optional[Tuple[float, float]] = None,
         prior_pdf_interval: Optional[Tuple[float, float]] = None,
         legend: bool = True,
         legend_title: Optional[str] = "Posteriors:",
@@ -237,8 +238,9 @@ class LaplaceResultsComparer:
         legend_bbox_to_anchor_vertical: float = -0.1,
         label_prefixes: Optional[Tuple[str, str]] = None,
         linestyles: Optional[Union[str, Tuple[str, str]]] = None,
-        linewidth: float = 1.0,
+        linewidth: float = 1.,
         color: Optional[str] = None,
+        skip_labels: Optional[Tuple[str, ...]] = None,
     ):
         """
         Grid of PDFs for all parameters.
@@ -252,7 +254,8 @@ class LaplaceResultsComparer:
         # resolve label set
         if expB is None:
             use_labels = sorted(runsA.keys()) if labels is None else self._resolve_labels(labels)
-            lfitsA = {k: runsA[k] for k in use_labels}
+            use_labels = [lbl for lbl in use_labels if lbl not in (skip_labels or [])]
+            lfitsA = {k: runsA[k] for k in use_labels}            
             # reuse your existing grid plotter for single experiment
             fig, axes = LaplacePosteriorPlotter.plot_all_laplace_posteriors_grid(
                 lfits=lfitsA,
@@ -263,6 +266,7 @@ class LaplaceResultsComparer:
                 ncols=ncols,
                 fig_size=fig_size,
                 prior_pdf_interval=prior_pdf_interval,
+                pdf_interval=pdf_interval,
                 add_legend=legend,
                 color=color,
                 linewidth=linewidth,
@@ -274,6 +278,7 @@ class LaplaceResultsComparer:
         runsB = self.posterior_dictionary[expB]
         if labels is None:
             inter = sorted(set(runsA.keys()) & set(runsB.keys()))
+            inter = [lbl for lbl in inter if lbl not in (skip_labels or [])]
             if not inter:
                 raise ValueError(
                     f"No common labels between '{expA}' and '{expB}'. "
@@ -286,12 +291,15 @@ class LaplaceResultsComparer:
         # style
         if linestyles is None:
             lsA, lsB = "-", "--"
+            linewidthA, linewidthB = linewidth + 0.5, linewidth
         elif isinstance(linestyles, str):
             lsA = lsB = linestyles
+            linewidthA = linewidthB = linewidth
         else:
             if len(linestyles) != 2:
                 raise ValueError("linestyles must be a string or a 2-tuple of strings.")
             lsA, lsB = linestyles
+            linewidthA = linewidthB = linewidth
 
         prefixes = label_prefixes or (f"{expA}_", f"{expB}_")
 
@@ -302,6 +310,9 @@ class LaplaceResultsComparer:
         nrows = int(np.ceil(len(param_names) / ncols))
         fig, axes2d = plt.subplots(nrows=nrows, ncols=ncols, figsize=fig_size, constrained_layout=True)
         axes = np.array(axes2d).ravel()
+        
+        color_cycle = LaplacePosteriorPlotter._safe_color_generator()
+        label_to_color = {lbl: {exp: next(color_cycle) for exp in (expA, expB)} for lbl in use_labels}
 
         # draw per-parameter
         for i, name in enumerate(param_names):
@@ -314,43 +325,42 @@ class LaplaceResultsComparer:
             if prior_mu is not None and prior_sigma is not None:
                 mu0 = prior_mu.get_from_iterator_name(name)
                 sigma0 = prior_sigma.get_from_iterator_name(name)
-                LaplacePosteriorPlotter.plot_single_laplace_posterior(
-                    param_name=name,
-                    lfit=ref_lfit,  # only used to get axis; prior is independent
+                LaplacePosteriorPlotter.plot_prior_only(
                     ax=ax,
-                    label=None,
-                    distribution_type="log-normal",
-                    prior_mu=mu0,
-                    prior_sigma=sigma0,
-                    prior_pdf_interval=prior_pdf_interval,
+                    mu=mu0,
+                    sigma=sigma0,
+                    interval=(prior_pdf_interval or (0.01, 0.99)),
                     color="black",
                     linewidth=2,
                     linestyle="-",
-                    add_legend=False,
-                    show_map_marker=True,
-                    marker_kwargs={"label": None},
+                    label="Prior",
+                    show_marker=True,
+                    marker_kwargs={"label": None},  # avoid legend duplication
                 )
             if true_params is not None:
                 ax.axvline(
                     true_params.get_from_iterator_name(name),
                     color="red",
-                    linestyle="--",
+                    linestyle="-",
                     linewidth=1,
                     label="TRUE",
                 )
-
+            
+    
             # overlay A (solid) and B (dashed)
             for lbl in use_labels:
                 # A
+                color_dict = label_to_color[lbl]
                 LaplacePosteriorPlotter.plot_single_laplace_posterior(
                     param_name=name,
                     lfit=runsA[lbl],
                     ax=ax,
                     label=f"{prefixes[0]}{lbl}",
                     distribution_type=distribution_type,
-                    color=color,
+                    pdf_interval=pdf_interval,
+                    color=color or color_dict[expA],
                     linestyle=lsA,
-                    linewidth=linewidth,
+                    linewidth=linewidthA,
                     add_legend=False,
                     show_map_marker=True,
                     marker_kwargs={"label": None},
@@ -362,12 +372,13 @@ class LaplaceResultsComparer:
                     ax=ax,
                     label=f"{prefixes[1]}{lbl}",
                     distribution_type=distribution_type,
-                    color=color,
+                    pdf_interval=pdf_interval,
+                    color=color or color_dict[expB],
                     linestyle=lsB,
-                    linewidth=linewidth,
+                    linewidth=linewidthB,
                     add_legend=False,
                     show_map_marker=True,
-                    marker_kwargs={"label": None},
+                    marker_kwargs={"marker": "o", "label": None},
                 )
 
             # units/format
@@ -428,7 +439,7 @@ class LaplaceResultsComparer:
                     param_name=param_name,
                     lfit=next(iter(runsA.values())),
                     ax=ax,
-                    label="Prior",
+                    label=None,
                     distribution_type="log-normal",
                     prior_mu=mu0,
                     prior_sigma=sigma0,
@@ -488,7 +499,7 @@ class LaplaceResultsComparer:
                     param_name=param_name,
                     lfit=next(iter(runs.values())),
                     ax=ax,
-                    label="Prior",
+                    label=None,
                     distribution_type="log-normal",
                     prior_mu=mu0,
                     prior_sigma=sigma0,
