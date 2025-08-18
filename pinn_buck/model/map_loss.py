@@ -33,7 +33,19 @@ class MAPLoss:
         self.weight_prior_loss = weight_prior_loss
         self.weight_likelihood_loss = weight_likelihood_loss
         self.extra_kwargs = kwargs
-
+        
+    @property
+    def weight_likelihood_loss(self) -> Union[float, torch.Tensor]:
+        """Get the weight of the likelihood loss."""
+        return self._weight_likelihood_loss
+    @weight_likelihood_loss.setter
+    def weight_likelihood_loss(self, value: Union[float, torch.Tensor]):
+        """Set the weight of the likelihood loss."""
+        if isinstance(value, torch.Tensor):
+            if value.dim() == 1:
+                value = value[..., None, None]
+        self._weight_likelihood_loss = value
+        
     def __call__(
         self,
         parameter_guess: Parameters,

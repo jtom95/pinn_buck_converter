@@ -10,7 +10,8 @@ import numpy as np
 
 
 # change the working directory to the root of the project
-sys.path.append(str(Path.cwd()))
+project_root = Path.cwd()
+sys.path.append(str(project_root))
 
 
 from pinn_buck.config import Parameters
@@ -20,6 +21,7 @@ from pinn_buck.constants import ParameterConstants
 from pinn_buck.io import Measurement
 from pinn_buck.noise import add_noise_to_Measurement
 
+from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
 from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator, BuckParamEstimatorFwdBck
 from pinn_buck.model_results.history import TrainingHistory
@@ -32,27 +34,8 @@ from scipy.stats import lognorm
 from pinn_buck.config import Parameters
 
 
-# Nominals and linear-space relative tolerances
-NOMINAL = Parameters(
-    L=6.8e-4,
-    RL=0.4,
-    C=1.5e-4,
-    RC=0.25,
-    Rdson=0.25,
-    Rloads= [3.3, 10.0, 6.8],  # Rload1, Rload2, Rload3
-    Vin=46.0,
-    VF=1.1,
-)
-
-REL_TOL = Parameters(
-    L=0.50,
-    RL=0.4,
-    C=0.50,
-    RC=0.50,
-    Rdson=0.5,
-    Rloads= [0.3, 0.3, 0.3],  # Rload1, Rload2, Rload3
-    Vin=0.3,
-    VF=0.3,
+PRIOR_SIGMA = rel_tolerance_to_sigma(
+    ParameterConstants.REL_TOL, number_of_stds_in_relative_tolerance=1
 )
 
 
@@ -83,27 +66,6 @@ import math
 # Previously, we assumed sigma = log(1 + rel_tol). This means we assume that the relative toleraces contain 1 standard deviation
 # of the data. Although usually the relative tolerances are defined as 2 or 3 standard deviations, we will use 1 standard deviation
 # since this is the worst case scenario.
-
-
-def rel_tolerance_to_sigma(rel_tol: Parameters) -> Parameters:
-    """Convert relative tolerances to standard deviations."""
-
-    def _to_sigma(value: float) -> torch.Tensor:
-        """Convert a relative tolerance to standard deviation."""
-        return torch.log(torch.tensor(1 + value, dtype=torch.float32))
-
-    return Parameters(
-        L=_to_sigma(rel_tol.L),
-        RL=_to_sigma(rel_tol.RL),
-        C=_to_sigma(rel_tol.C),
-        RC=_to_sigma(rel_tol.RC),
-        Rdson=_to_sigma(rel_tol.Rdson),
-        Rloads = [
-            _to_sigma(rload) for rload in rel_tol.Rloads
-        ],  # Rload1, Rload2, Rload3
-        Vin=_to_sigma(rel_tol.Vin),
-        VF=_to_sigma(rel_tol.VF),
-    )
 
 
 # %%
@@ -138,22 +100,28 @@ noise_power_ADC_v = sigma_noise_ADC_v**2
 noise_power_5_v = sigma_noise_5_v**2
 noise_power_10_v = sigma_noise_10_v**2
 
+noise_power_dict = {
+    "ADC_error": (noise_power_ADC_i, noise_power_ADC_v),
+    "5 noise": (noise_power_5_i, noise_power_5_v),
+    "10 noise": (noise_power_10_i, noise_power_10_v),
+}
+
 
 # load measurements
-db_dir = Path(r"C:/Users/JC28LS/OneDrive - Aalborg Universitet/Desktop/Work/Databases")
+db_dir = project_root.parent / "Databases"
 h5filename = "buck_converter_Shuai_processed.h5"
 io = LoaderH5(db_dir, h5filename)
 
 ### the jacobians are independent of the measurement so we can calculate them once
-io.load("10 noise")
-X = torch.tensor(io.M.data, device=device)
-model = BuckParamEstimatorFwdBck(param_init = NOMINAL).to(device)
+model = BuckParamEstimatorFwdBck(param_init = ParameterConstants.NOMINAL).to(device)
 
 
 covariance_matrices = []
 jacobian_estimator = FwdBckJacobianEstimator()
 
-for data_covariance in [(noise_power_ADC_i, noise_power_ADC_v), (noise_power_5_i, noise_power_5_v), (noise_power_10_i, noise_power_10_v)]:
+for label, data_covariance in noise_power_dict.items():
+    io.load(label)  
+    X = torch.tensor(io.M.data, device=device)
     jac_fwd = jacobian_estimator.estimate_Jacobian(
         X, model, 
         direction="forward",
@@ -283,13 +251,13 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     # Train the model on the noisy measurement
     X = torch.tensor(io.M.data, device=device)
-    model = BuckParamEstimatorFwdBck(param_init = NOMINAL).to(device)
+    model = BuckParamEstimatorFwdBck(param_init = ParameterConstants.NOMINAL).to(device)
 
     L_fwd, L_bck = l_dict[group_number]["fwd"], l_dict[group_number]["bck"]
 
     map_loss = MAPLoss(
-        initial_params=NOMINAL,
-        initial_sigma=rel_tolerance_to_sigma(REL_TOL),
+        initial_params=ParameterConstants.NOMINAL,
+        initial_sigma=PRIOR_SIGMA,
         loss_likelihood_function=loss_whitened_fwbk,  # loss function for the forward-backward pass
         residual_function=basic_residual,
         L_fwd=L_fwd,  # Cholesky factor of the diagonal noise covariance matrix

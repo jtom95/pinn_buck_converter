@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -26,8 +25,8 @@ PRIOR_SIGMA = rel_tolerance_to_sigma(
 # from pinn_buck.plot_aux import place_shared_legend
 
 directory_dict = {
-    "Fwd2": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD2",
-    "Fwd1": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD1",
+    "Fwd_vif": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_VIF",
+    "Fwd_vif_tr": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_VIF_tr",
 }
 
 rc = ResultsComparerTwo.from_dirs(

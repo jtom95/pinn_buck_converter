@@ -170,7 +170,7 @@ class Trainer:
             new_loss_obj = update_callback(self.model, self.map_loss, X).clone()
             self.map_loss = new_loss_obj
             self.callback_count += 1
-            print(f"[{optimizer_name}] vif {1/getattr(new_loss_obj, 'weight_likelihood_loss'):.4e} at iteration {iteration}")
+            print(f"[{optimizer_name}] vif {1/getattr(new_loss_obj, 'weight_likelihood_loss')} at iteration {iteration}")
 
         finally:
             if was_training:

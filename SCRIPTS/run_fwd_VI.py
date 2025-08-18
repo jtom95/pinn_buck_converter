@@ -10,7 +10,8 @@ import numpy as np
 
 
 # change the working directory to the root of the project
-sys.path.append(str(Path.cwd()))
+project_root = Path.cwd()
+sys.path.append(str(project_root))
 
 
 from pinn_buck.config import Parameters
@@ -20,6 +21,7 @@ from pinn_buck.constants import ParameterConstants
 from pinn_buck.io import Measurement
 from pinn_buck.noise import add_noise_to_Measurement
 
+from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
 from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator, BuckParamEstimatorFwdBck
 from pinn_buck.model_results.history import TrainingHistory
@@ -32,29 +34,8 @@ from scipy.stats import lognorm
 from pinn_buck.config import Parameters
 
 
-from pinn_buck.constants import ParameterConstants
-
-# Nominals and linear-space relative tolerances
-NOMINAL = Parameters(
-    L=6.8e-4,
-    RL=0.4,
-    C=1.5e-4,
-    RC=0.25,
-    Rdson=0.25,
-    Rloads= [3.3, 10.0, 6.8],  # Rload1, Rload2, Rload3
-    Vin=46.0,
-    VF=1.1,
-)
-
-REL_TOL = Parameters(
-    L=0.50,
-    RL=0.4,
-    C=0.50,
-    RC=0.50,
-    Rdson=0.5,
-    Rloads= [0.3, 0.3, 0.3],  # Rload1, Rload2, Rload3
-    Vin=0.3,
-    VF=0.3,
+PRIOR_SIGMA = rel_tolerance_to_sigma(
+    ParameterConstants.REL_TOL, number_of_stds_in_relative_tolerance=1
 )
 
 
@@ -141,9 +122,15 @@ noise_power_ADC_v = sigma_noise_ADC_v**2
 noise_power_5_v = sigma_noise_5_v**2
 noise_power_10_v = sigma_noise_10_v**2
 
+noise_power_dict = {
+    "ADC_error": (noise_power_ADC_i, noise_power_ADC_v),
+    "5 noise": (noise_power_5_i, noise_power_5_v),
+    "10 noise": (noise_power_10_i, noise_power_10_v),
+}
+
 
 # load measurements
-db_dir = Path(r"C:/Users/JC28LS/OneDrive - Aalborg Universitet/Desktop/Work/Databases")
+db_dir = project_root.parent / "Databases"
 h5filename = "buck_converter_Shuai_processed.h5"
 io = LoaderH5(db_dir, h5filename)
 
@@ -156,7 +143,7 @@ model = BuckParamEstimator(param_init = ParameterConstants.NOMINAL).to(device)
 covariance_matrices = []
 jacobian_estimator = JacobianEstimator()
 
-for label, data_covariance in zip(["ADC_error", "5 noise", "10 noise"], [(noise_power_ADC_i, noise_power_ADC_v), (noise_power_5_i, noise_power_5_v), (noise_power_10_i, noise_power_10_v)]):
+for label, data_covariance in noise_power_dict.items():
     io.load(label)
     X = torch.tensor(io.M.data, device=device)
     jac = jacobian_estimator.estimate_Jacobian(
@@ -177,14 +164,14 @@ for label, data_covariance in zip(["ADC_error", "5 noise", "10 noise"], [(noise_
 
     covariance_matrices.append(covariance_matrix)
 
-def calculate_Lr_and_vif(model: BaseBuckEstimator, X: torch.Tensor):
+def calculate_Lr_and_vif(model: BaseBuckEstimator, X: torch.Tensor, data_covariance: Tuple[float, float]) -> Tuple[torch.Tensor, torch.Tensor]:
     """Update the MAP loss function with the current model parameters."""
     jacobian_estimator = JacobianEstimator()
     jac = jacobian_estimator.estimate_Jacobian(
         X, model, number_of_samples=500, dtype=torch.float64
     )[..., :2, :2]
     covariance_matrix = generate_residual_covariance_matrix(
-        data_covariance=(noise_power_ADC_i, noise_power_ADC_v),
+        data_covariance=data_covariance,
         residual_covariance_func=covariance_matrix_on_basic_residuals,
         jac=jac,
         dtype=torch.float64
@@ -200,27 +187,31 @@ def calculate_Lr_and_vif(model: BaseBuckEstimator, X: torch.Tensor):
     gauss_residual_diagnostics = ResidualDiagnosticsGaussian(residuals=residuals)
     vif = gauss_residual_diagnostics.quadloss_vif_from_residuals()
     vif_median = torch.median(vif)
-    return Lr, vif_median
+    return Lr, vif
 
-def map_loss_update_function(model: BaseBuckEstimator, map_loss: MAPLoss, X: torch.Tensor):
-    Lr, vif = calculate_Lr_and_vif(model, X)
-    return map_loss.clone(
-        # weight_likelihood_loss=1/vif,
-        L = Lr
+from functools import partial
+
+
+def callback_function_on_map(
+    model: BaseBuckEstimator, 
+    map_loss: MAPLoss,
+    X: torch.Tensor, 
+    data_covariance: Tuple[float, float]
+    ) -> MAPLoss:
+    
+    """Update the MAP loss function with the current model parameters."""
+    Lr, vif = calculate_Lr_and_vif(model, X, data_covariance)
+    map_loss = map_loss.clone(
+        L=Lr,  # Cholesky factor of the diagonal noise covariance matrix
+        weight_likelihood_loss=1.0 / vif,  # use the VIF as the main loss
     )
+    return map_loss
 
 Lrs = {}
 vifs = {}
 idx = 1
 
-for label, data_covariance in zip(
-    ["ADC_error", "5 noise", "10 noise"],
-    [
-        (noise_power_ADC_i, noise_power_ADC_v),
-        (noise_power_5_i, noise_power_5_v),
-        (noise_power_10_i, noise_power_10_v),
-    ],
-):
+for label, data_covariance in noise_power_dict.items():
     X = torch.tensor(io.M.data, device=device)
     with torch.no_grad():
         targets = model.targets(X)
@@ -232,7 +223,7 @@ for label, data_covariance in zip(
     vif_perchannel = torch.median(vif_perchannel, dim=0).values 
 
     io.load(label)
-    Lr, vif = calculate_Lr_and_vif(model, X)
+    Lr, vif = calculate_Lr_and_vif(model, X, data_covariance)
     Lrs[data_covariance] = Lr
     vifs[data_covariance] = vif
 
@@ -278,7 +269,7 @@ from pinn_buck.model.map_loss import MAPLoss
 
 set_seed(123)
 device = "cpu"
-out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD2"
+out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_VIF_tr"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 run_configs = TrainingConfigs(
@@ -330,20 +321,25 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     # Train the model on the noisy measurement
     X = torch.tensor(io.M.data, device=device)
-    model = BuckParamEstimator(param_init = NOMINAL).to(device)
+    model = BuckParamEstimator(param_init = ParameterConstants.NOMINAL).to(device)
 
-    # L = l_dict[group_number]
+    data_covariance = noise_power_dict[group_name]
 
     map_loss = MAPLoss(
-        initial_params=NOMINAL,
-        initial_sigma=rel_tolerance_to_sigma(REL_TOL),
+        initial_params=ParameterConstants.NOMINAL,
+        initial_sigma=PRIOR_SIGMA,
         loss_likelihood_function=loss_whitened,  # loss function for the forward-backward pass
         residual_function=basic_residual,
         # L=L,  # Cholesky factor of the diagonal noise covariance matrix
     ).likelihood
 
-    # initially don't use vif which is too high for params far from the optimum
-    map_loss = map_loss_update_function(model, map_loss, X).clone(weight_likelihood_loss=1.0)
+    callback_func = partial(
+        callback_function_on_map,
+        data_covariance=data_covariance
+    )
+    map_loss = callback_func(model, map_loss, X).clone(weight_likelihood_loss=1.)
+    # # initially don't use vif which is too high for params far from the optimum
+    # map_loss = map_loss_update_function(model, map_loss, X).clone(weight_likelihood_loss=1.0)
 
 
     trainer = Trainer(
@@ -355,8 +351,9 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     trainer.fit(
         X=X,
-        update_loss_callback=map_loss_update_function,
-        update_every_adam=3_000
+        update_loss_callback=callback_func,
+        update_every_adam=3_000,
+        update_every_lbfgs=30
     )
 
     ### fit a Laplace Approximator for the posterior
@@ -376,6 +373,8 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     trainer.history.get_best_parameters().save(out_dir / f"best_params_{group_name}.json")
     trainer.history.save_to_csv(out_dir / f"history_{group_name}.csv")
+    
+    print("Final VIF:", 1 / trainer.map_loss.weight_likelihood_loss)
     print("\n \n \n")
 
 
