@@ -286,7 +286,7 @@ class LaplaceApproximator:
         The returned callable is differentiable wrt its θ argument – this is
         crucial for the Hessian-based Laplace approximation.
         """
-        
+
         X = X.to(self.device)
         targets = self.model.targets(X).to(self.device)
 
@@ -353,3 +353,154 @@ class LaplaceApproximator:
             Sigma_phys=Sigma_phys,
             param_names=[d for d, _ in self._mapping],  # display order
         )
+
+
+    def fit_with_hac(
+        self,
+        X: torch.Tensor,
+        L_r: torch.Tensor,
+        *,
+        residual_fn,
+        max_lag: int | None = None,
+        bartlett: bool = True,
+        bandwidth_rule: str = "n13",
+        center_scores: bool = True,
+        weight_likelihood: float | None = None,
+        dtype: torch.dtype = torch.float64,
+    ) -> LaplacePosterior:
+        """
+        NOT WORKING YET!
+        Need to study the HAC covariance estimation theory better.
+        """
+        
+        raise NotImplementedError(
+            "HAC Laplace approximation is not implemented yet. "
+            "Please use the standard `fit` method instead."
+        )
+        
+        device = self.device
+        X = X.to(device)
+
+        # Likelihood weight used in your MAP objective (e.g., 1/VIF)
+        if weight_likelihood is None:
+            weight_likelihood = float(getattr(self.loss_fn, "weight_likelihood_loss", 1.0))
+
+        # Bandwidth
+        with torch.no_grad():
+            targets = self.model.targets(X).to(device)
+        N, T, C = targets.shape  # expect (N,T,2)
+        if max_lag is None:
+            M = (
+                max(1, int(1.5 * (N ** (1 / 3))))
+                if bandwidth_rule == "n13"
+                else max(1, int(1.5 * (N ** (1 / 3))))
+            )
+            M = min(M, N - 1)
+        else:
+            M = max(1, min(max_lag, N - 1))
+        w = torch.ones((M,), dtype=dtype, device=device)
+        if bartlett:
+            w = 1.0 - torch.arange(1, M + 1, device=device, dtype=dtype) / (M + 1)
+
+        # θ_MAP and closure for full (posterior) loss
+        theta_map = self._flat_vector_logparams().to(device)
+        theta_map.requires_grad_(True)
+        loss_on_theta = self._build_loss_on_theta(X)
+
+        # Observed Hessian at MAP (full objective) + damping
+        H = hessian(loss_on_theta, theta_map)
+        H = 0.5 * (H + H.T)
+        I = torch.eye(H.shape[0], device=device, dtype=H.dtype)
+        H = (H + self.damping * I).to(dtype)
+
+        # Helper to patch params
+        def _param_dict(vec: torch.Tensor):
+            return self._logparam_dictionary(vec)
+
+        # Build preds function that depends on θ (NO .detach here!)
+        def preds_with_theta(theta_vec: torch.Tensor) -> torch.Tensor:
+            return functional_call(self.model, _param_dict(theta_vec), (X,))
+
+        # Residuals at θ_MAP (for v = Σ^{-1} r); f_θ will be recomputed inside grads
+        with torch.no_grad():
+            preds_map = preds_with_theta(theta_map).to(dtype)
+            targets = targets.to(dtype)
+            r = residual_fn(preds_map, targets).to(dtype)  # (N,T,2)
+
+        # L_r shape handling
+        if L_r.ndim == 2:
+            L = L_r.to(device=device, dtype=dtype).expand(T, -1, -1)  # (T,2,2)
+        else:
+            L = L_r.to(device=device, dtype=dtype)  # (T,2,2)
+
+        # y = L^{-1} r; v = Σ^{-1} r = (L^{-T}) y
+        rT = r.permute(1, 2, 0)  # (T,2,N)
+        yT = torch.linalg.solve_triangular(L, rT, upper=False)  # (T,2,N)
+        vT = torch.linalg.solve_triangular(L.transpose(-1, -2), yT, upper=True)
+        v = vT.permute(2, 0, 1).contiguous()  # (N,T,2)
+
+        # Scores s_{n,t} = ∂/∂θ [ weight * v_{n,t}^T f_θ(n,t) ]
+        p = theta_map.numel()
+        scores = torch.zeros((N, T, p), dtype=dtype, device=device)
+
+        # We reuse computation graphs across (n,t); retain_graph to avoid re-building
+        for t_idx in range(T):
+            v_t = v[:, t_idx, :].detach()  # DETACH v (treated as constant)
+            for n in range(N):
+
+                def scalar_on_theta(theta_vec: torch.Tensor) -> torch.Tensor:
+                    f_all = preds_with_theta(theta_vec).to(dtype)  # depends on θ
+                    return weight_likelihood * (v_t[n] * f_all[n, t_idx]).sum()
+
+                # gradient wrt θ (vector length p)
+                grad_vec = torch.autograd.grad(
+                    scalar_on_theta(theta_map),
+                    theta_map,
+                    retain_graph=True,
+                    create_graph=False,
+                    allow_unused=False,
+                )[0]
+                scores[n, t_idx] = grad_vec.to(dtype)
+
+        if center_scores:
+            scores = scores - scores.mean(dim=0, keepdim=True)
+
+        # HAC G
+        G = torch.zeros((p, p), dtype=dtype, device=device)
+        Gamma0 = torch.einsum("ntp,ntq->pq", scores, scores) / N
+        G = G + Gamma0
+        for k in range(1, M + 1):
+            Sk, S0 = scores[k:], scores[:-k]  # (N-k,T,p)
+            Gamma_k = torch.einsum("ntp,ntq->pq", Sk, S0) / (N - k)
+            wk = w[k - 1]
+            G = G + wk * (Gamma_k + Gamma_k.T)
+
+        # Sandwich: H^{-1} G H^{-1}
+        H_inv = torch.linalg.inv(H)
+        Sigma_log_robust = H_inv @ G @ H_inv
+
+        # Physical-space transform
+        est = self.model.get_estimates()
+        theta_phys = torch.tensor([v for _, v in est.iterator()], device=device, dtype=dtype)
+        J = torch.diag(theta_phys)
+        Sigma_phys_robust = J @ Sigma_log_robust @ J.T
+
+        post = LaplacePosterior(
+            theta_log=theta_map.detach().to(dtype),
+            Sigma_log=Sigma_log_robust,
+            theta_phys=theta_phys,
+            Sigma_phys=Sigma_phys_robust,
+            param_names=[d for d, _ in self._mapping],
+        )
+        # (Optional) attach plain Laplace for reference
+        post.Sigma_log_plain = H_inv
+        post.Sigma_phys_plain = J @ H_inv @ J.T
+        post.H = H
+        post.G_hac = G
+        post.hac_meta = {
+            "M": int(M),
+            "bartlett": bool(bartlett),
+            "center_scores": bool(center_scores),
+            "weight_likelihood": float(weight_likelihood),
+        }
+        return post

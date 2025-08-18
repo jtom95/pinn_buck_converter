@@ -50,8 +50,8 @@ laplace_comparer = LaplaceResultsComparer.from_dirs(directory_dict)
 laplace_comparer.plot_posteriors_grid(
     skip_labels=("ADC_error",),
     ncols=4, 
-    # prior_mu=NOMINAL, 
-    # prior_sigma=PRIOR_SIGMA, 
+    prior_mu=NOMINAL, 
+    prior_sigma=PRIOR_SIGMA, 
     true_params=TRUE_PARAMS,
     )
 # laplace_comparer.plot_param_overlay("Rdson", prior_mu=NOMINAL, prior_sigma=PRIOR_SIGMA, true_params=TRUE_PARAMS,)
