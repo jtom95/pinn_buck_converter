@@ -24,9 +24,13 @@ def _sigma_to_quantiles(n_sigma: float):
     alpha = 0.5 * erf(n_sigma / np.sqrt(2))
     return 0.5 - alpha, 0.5 + alpha
 
+class LaplacePosteriorConstants:
+    DEFAULT_FILE_PATTERN = "*.laplace.json"
+    
+
 
 @dataclass
-class LaplacePosterior:
+class LaplacePosterior:    
     theta_log: torch.Tensor  # flat vector (num_params,)
     Sigma_log: torch.Tensor  # (num_params, num_params)
     theta_phys: torch.Tensor  # flat vector (num_params,)
@@ -146,13 +150,14 @@ class LaplacePosterior:
         Tensors are stored as nested lists (CPU, float64).
         """
         path = Path(path)
+        file_pattern = LaplacePosteriorConstants.DEFAULT_FILE_PATTERN
         
         # if it doesn't end in .laplace.json add it. If it just finishes in .json make it .laplace.json
-        if not path.name.endswith(".laplace.json"):
+        if not path.name.endswith(file_pattern):
             if path.name.endswith(".json"):
-                path = path.with_name(path.stem + ".laplace.json")
+                path = path.with_name(path.stem + file_pattern)
             else:
-                path = path.with_suffix(".laplace.json")
+                path = path.with_suffix(file_pattern)
 
         data = {
             "theta_log": self.theta_log.detach().cpu().numpy().tolist(),
@@ -170,8 +175,12 @@ class LaplacePosterior:
     ) -> "LaplacePosterior":
         """
         Load LaplacePosterior from a JSON file.
-        """
+        """        
         path = Path(path)
+        if not path.name.endswith(LaplacePosteriorConstants.DEFAULT_FILE_PATTERN[1:]):
+            raise ValueError(
+                f"Invalid file pattern: {path.name}. Expected pattern: {LaplacePosteriorConstants.DEFAULT_FILE_PATTERN}"
+            )
         with path.open("r") as f:
             data = json.load(f)
 
@@ -189,7 +198,7 @@ class LaplaceApproximator:
     Laplace‐approximation helper for a trained **buck-converter estimator**.
 
     The class builds a *local* Gaussian approximation of the joint posterior
-    over the **log–parameters** θ around the MAP estimate θ\_MAP that is already
+    over the **log–parameters** θ around the MAP estimate θ_MAP that is already
     stored inside `model`.  The workflow is
 
        1.  **Flatten** every learnable log-parameter in a fixed, reproducible
@@ -198,11 +207,11 @@ class LaplaceApproximator:
            so that the forward graph is fully differentiable wrt θ
            (`_build_loss_on_theta`).
        3.  Evaluate the user-supplied negative-log-posterior loss
-           `loss_fn(θ, X)` at θ\_MAP, back–prop once, and call
-           `torch.autograd.functional.hessian` to obtain ∇²\_θ ℓ.
-       4.  Invert (damped) Hessian → posterior covariance **Σ\_log**.
+           `loss_fn(θ, X)` at θ_MAP, back–prop once, and call
+           `torch.autograd.functional.hessian` to obtain ∇²_θ ℓ.
+       4.  Invert (damped) Hessian → posterior covariance **Σ_log**.
        5.  Convert mean/covariance to *physical* parameter space via the
-           diagonal Jacobian J = diag(exp θ\_MAP).
+           diagonal Jacobian J = diag(exp θ_MAP).
 
     The resulting `LaplacePosterior` exposes convenience routines to print
     1-σ / 2-σ intervals and to build independent Normal or Log-Normal

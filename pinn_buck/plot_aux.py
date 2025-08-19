@@ -25,6 +25,16 @@ def place_shared_legend(
     """
     axes = list(axes)
 
+    # 3) find a "free" axis: no lines/collections/images
+    def is_free(a: Axes) -> bool:
+        return not (a.lines or a.collections or a.images)
+
+    free_ax = next((a for a in axes if is_free(a)), None)
+    
+    if free_ax is None and empty_slot_only:
+        # no free axis available
+        return
+    
     # 1) collect handles/labels for all unique labels across axes
     handles, labels = [], []
     seen_labels = set()
@@ -45,13 +55,7 @@ def place_shared_legend(
         if leg is not None:
             leg.remove()
 
-    # 3) find a "free" axis: no lines/collections/images
-    def is_free(a: Axes) -> bool:
-        return not (a.lines or a.collections or a.images)
-
-    free_ax = next((a for a in axes if is_free(a)), None)
-
-    if empty_slot_only and free_ax is not None:
+    if free_ax is not None:
         free_ax.axis("off")
         ncol = ncol or 1
         free_ax.legend(

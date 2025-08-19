@@ -5,6 +5,16 @@ from types import MappingProxyType
 ## Parameter Constants
 class ParameterConstants:
     """Physical and nominal parameter values used in the project."""
+    UNITS: Final = Parameters(
+        L = "H",
+        RL = "Ω",
+        C = "F",
+        RC = "Ω",
+        Rdson = "Ω",
+        Rloads = ["Ω"]*3,
+        Vin = "V",
+        VF = "V",
+    )
 
     TRUE : Final = Parameters(
         L=7.25e-4,

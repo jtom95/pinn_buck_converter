@@ -25,8 +25,8 @@ PRIOR_SIGMA = rel_tolerance_to_sigma(
 # from pinn_buck.plot_aux import place_shared_legend
 
 directory_dict = {
-    "Fwd_vif": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_VIF",
-    "Fwd_vif_tr": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_VIF_tr",
+    "ResD1": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "RESD1",
+    "ResD1_vif": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "RESD1_VIF",
 }
 
 rc = ResultsComparerTwo.from_dirs(
@@ -50,8 +50,8 @@ laplace_comparer = LaplaceResultsComparer.from_dirs(directory_dict)
 laplace_comparer.plot_posteriors_grid(
     skip_labels=("ADC_error",),
     ncols=4, 
-    prior_mu=NOMINAL, 
-    prior_sigma=PRIOR_SIGMA, 
+    # prior_mu=NOMINAL, 
+    # prior_sigma=PRIOR_SIGMA, 
     true_params=TRUE_PARAMS,
     )
 # laplace_comparer.plot_param_overlay("Rdson", prior_mu=NOMINAL, prior_sigma=PRIOR_SIGMA, true_params=TRUE_PARAMS,)
