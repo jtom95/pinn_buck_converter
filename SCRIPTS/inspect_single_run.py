@@ -31,6 +31,7 @@ lplotter = LaplacePosteriorPlotter.from_dir(
     save_dir
 )
 
+lplotter.plot_laplace_posteriors(true_params=TRUE_PARAMS, ncols=3)
 lplotter.plot_uncertainty_percent()
 lplotter.plot_ci(n_sigma=1.5, ncols=3, true_params=TRUE_PARAMS)
 plt.show()

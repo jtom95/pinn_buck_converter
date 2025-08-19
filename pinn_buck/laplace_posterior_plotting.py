@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Union, Tuple, Literal
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Union, Tuple, Literal, Protocol, runtime_checkable
 import torch
 
 import numpy as np
@@ -16,17 +16,15 @@ from scipy.stats import lognorm, norm
 from pinn_buck.constants import ParameterConstants
 import itertools
 
-from typing import Protocol, runtime_checkable
-
 from .laplace_posterior_fitting import LaplacePosterior
 from .config import Parameters
-from .plot_aux import place_shared_legend
+from .plot_aux import place_shared_legend, _apply_eng_label_only
 
 
 AxesLike = Union[plt.Axes, np.ndarray]
 
 
-def _coerce_axes_grid(ax: Optional[AxesLike], nrows: int, ncols: int, fig_size):
+def _coerce_axes_grid(ax: Optional[AxesLike], nrows: int, ncols: int, figsize):
     """
     Return (fig, axes2d, axes_flat).
     If ax is None -> create fig,axes.
@@ -34,7 +32,7 @@ def _coerce_axes_grid(ax: Optional[AxesLike], nrows: int, ncols: int, fig_size):
     If ax is a 2D array of Axes with correct shape -> use it.
     """
     if ax is None:
-        fig, axes2d = plt.subplots(nrows=nrows, ncols=ncols, figsize=fig_size)
+        fig, axes2d = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize, constrained_layout=True)
     else:
         # ax can be a single Axes (only valid for 1x1) or a np.ndarray of Axes with shape (nrows, ncols)
         if isinstance(ax, plt.Axes):
@@ -82,6 +80,7 @@ class LaplaceDictionaryLoader:
 
     DEFAULT_MEASUREMENT_GROUP = MeasurementGroupArchive.SHUAI_ORIGINAL
     DEFAULT_FILE_PATTERN = LaplacePosteriorConstants.DEFAULT_FILE_PATTERN
+    DEFAULT_PDF_INTERVAL = (0.01, 0.99)
 
     def __init__(
         self,
@@ -105,17 +104,17 @@ class LaplaceDictionaryLoader:
         if name.lower().endswith(final_suffix.lower()):
             return name[: -len(final_suffix)]
         return p.stem  # fallback (shouldn't happen if globbed with correct pattern)
-
-    def _resolve_labels(self, labels: Iterable[Union[int, str]]) -> List[str]:
+    @staticmethod
+    def _resolve_labels(group_number_dict: Mapping[int, str], labels: Iterable[Union[int, str]]) -> List[str]:
         """
         Resolve a mixed list of int/str labels into strings using self.group_number_dict for ints.
         """
         out: List[str] = []
         for lab in labels:
             if isinstance(lab, int):
-                if lab not in self.group_number_dict:
+                if lab not in group_number_dict:
                     raise KeyError(f"Integer label {lab} not in group_number_dict.")
-                out.append(self.group_number_dict[lab])
+                out.append(group_number_dict[lab])
             else:
                 out.append(lab)
         return out
@@ -188,7 +187,7 @@ class LaplaceDictionaryLoader:
                 self.group_number_dict[k] for k in sorted(self.group_number_dict.keys())
             ]
         else:
-            wanted_labels = self._resolve_labels(labels)
+            wanted_labels = self._resolve_labels(self.group_number_dict, labels)
 
         result: Dict[str, "LaplacePosterior"] = {}
 
@@ -284,32 +283,23 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         return lognorm(s=sigma, scale=mu)
 
     @staticmethod
-    def _format_axis(ax: plt.Axes, name: str) -> None:
-        # add simple unit formatting if desired
-        if name == "L":
-            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x*1e3:.2f}"))
-            ax.set_xlabel("[mH]")
-        elif name == "C":
-            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x*1e6:.2f}"))
-            ax.set_xlabel("[μF]")
-
-    @staticmethod
     def _sigma_to_quantiles(n_sigma: float) -> Tuple[float, float]:
         # Same math as in your LaplacePosterior helper
         alpha = 0.5 * erf(n_sigma / sqrt(2.0))
         return 0.5 - alpha, 0.5 + alpha
 
-    @staticmethod
+    @classmethod
     def plot_prior_only(
+        cls,
         ax: plt.Axes,
         mu: float,
         sigma: float,
-        interval: Tuple[float, float] = (0.01, 0.99),
+        interval: Tuple[float, float] = None,
         *,
         color: Optional[str] = "black",
         linestyle: str = "-",
         linewidth: float = 2.0,
-        label: Optional[str] = "Prior (log-normal)",
+        label: Optional[str] = "Prior",
         show_marker: bool = True,
         marker_kwargs: Optional[dict] = None,
     ) -> plt.Axes:
@@ -319,7 +309,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         - interval is the (lo, hi) quantile range for the x-limits.
         """
         prior = lognorm(s=sigma, scale=mu)
-        lo, hi = interval
+        lo, hi = interval or cls.DEFAULT_PDF_INTERVAL
         x = np.linspace(prior.ppf(lo), prior.ppf(hi), 500)
         y = prior.pdf(x)
         (line,) = ax.plot(x, y, color=color, linestyle=linestyle, linewidth=linewidth, label=label)
@@ -333,19 +323,28 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
 
         return ax
 
+    # @classmethod
+    # def _format_abs_axis_with_unit(cls, ax: plt.Axes, param_name: str) -> None:
+    #     """
+    #     Absolute-value axis: attach engineering formatter with the correct unit and
+    #     keep ticks sparse to avoid overlap.
+    #     """
+    #     unit = ParameterConstants.UNITS.get_from_iterator_name(param_name)
+    #     if unit:
+    #         ax.xaxis.set_major_formatter(EngFormatter(unit=unit))
+    #     else:
+    #         ax.set_xlabel("Value")
+    #     # keep ticks sparse so labels don't collide
+    #     ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
+        
     @classmethod
     def _format_abs_axis_with_unit(cls, ax: plt.Axes, param_name: str) -> None:
-        """
-        Absolute-value axis: attach engineering formatter with the correct unit and
-        keep ticks sparse to avoid overlap.
-        """
         unit = ParameterConstants.UNITS.get_from_iterator_name(param_name)
         if unit:
-            ax.xaxis.set_major_formatter(EngFormatter(unit=unit))
+            _apply_eng_label_only(ax, unit)   # << use this path for label-with-unit
         else:
             ax.set_xlabel("Value")
-        # keep ticks sparse so labels don't collide
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
 
     # ---------- public API ----------
     def ci_dataframe_label(
@@ -583,7 +582,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         mean_tick_height_factor: float = 0.6,
         colors: Optional[Dict[str, str]] = None,
         title: Optional[str | None] = None,
-        legend_title: str = "Labels:",
+        legend_title: str = "Posteriors:",
         legend_ncol: Optional[int] = None,
         legend_frameon: bool = True,
         legend_title_fontsize: Optional[int] = None,
@@ -615,7 +614,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         # ----- figure & axes -----
         nrows = ceil(n_params / ncols)
         fig, axes = plt.subplots(
-            nrows=nrows, ncols=ncols, figsize=figsize, sharex=False, constrained_layout=True
+            nrows=nrows, ncols=ncols, figsize=figsize, sharex=False, sharey=True, constrained_layout=True
         )
         axes = np.atleast_1d(axes).ravel()
 
@@ -638,9 +637,9 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
             ax.set_title(pname)
 
             # y labels are the labels themselves (top-to-bottom)
-            y_positions = np.arange(len(labels_to_use))[::-1]
+            y_positions = np.arange(len(labels_to_use))
             ax.set_yticks(y_positions)
-            ax.set_yticklabels(labels_to_use[::-1])
+            ax.set_yticklabels(labels_to_use)
 
             # TRUE reference (label only on first subplot so shared legend picks it up once)
             if true_params is not None:
@@ -709,166 +708,12 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
 
         return fig, axes
 
-    # def plot_ci_bars_percent_subplots(
-    #     self,
-    #     labels: Optional[Iterable[str]] = None,
-    #     distribution_type: Literal["log-normal", "gaussian"] = "log-normal",
-    #     n_sigma: float = 1.0,
-    #     true_params: Optional[Parameters] = None,
-    #     *,
-    #     ax: Optional[plt.Axes] = None,
-    #     figsize: Tuple[int, int] = (10, 3),
-    #     bar_height: float = 0.35,
-    #     mean_tick_height_factor: float = 0.6,
-    #     colors: Optional[Dict[str, str]] = None,
-    #     title_prefix: Optional[str] = None,
-    #     legend: bool = False,
-    # ):
-    #     """
-    #     Plot one horizontal CI bar chart *per label* on its own subplot.
-    #     Each subplot has a common percentage x-axis, mean at 0.
-    #     """
-    #     import matplotlib.pyplot as plt
-
-    #     # Labels to include
-    #     if labels is None:
-    #         labels_to_use = list(self.lfits.keys())
-    #     else:
-    #         labels_to_use = list(labels)
-
-    #     n_labels = len(labels_to_use)
-
-    #     if ax is None:
-    #         fig, axes = plt.subplots(
-    #             n_labels, 1, figsize=(figsize[0], figsize[1] * n_labels),
-    #             constrained_layout=True, sharex=True, sharey=True
-    #         )
-    #     else:
-    #         # check the number of axes is enough
-    #         naxes = len(np.atleast_1d(ax).flatten())
-    #         if naxes < n_labels:
-    #             raise ValueError(f"Not enough axes provided: {naxes} < {n_labels}")
-    #         axes = np.atleast_1d(ax).flatten()[:n_labels]  # use only the first n_labels axes
-    #         fig = axes[0].figure  # take the figure from the first Axes
-
-    #     # Handle case of single label (axes not an array)
-    #     if n_labels == 1:
-    #         axes = [axes]
-
-    #     for ax, lbl in zip(axes, labels_to_use):
-    #         self.plot_ci_bars_percent(
-    #             labels=[lbl],
-    #             distribution_type=distribution_type,
-    #             n_sigma=n_sigma,
-    #             true_params=true_params,
-    #             ax=ax,  # pass subplot axis
-    #             figsize=figsize,
-    #             bar_height=bar_height,
-    #             mean_tick_height_factor=mean_tick_height_factor,
-    #             colors=colors,
-    #             title=(f"{title_prefix}: {lbl}" if title_prefix else lbl),
-    #             legend=legend,
-    #         )
-
-    #     return fig, axes
-
-    @classmethod
-    def plot_laplace_posteriors(
-        cls,
-        lfit: "LaplacePosterior",
-        true_params: Optional[Parameters] = None,
-        prior_mu: Optional[Parameters] = None,
-        prior_sigma: Optional[Parameters] = None,
-        prior_pdf_interval: Optional[Tuple[float, float]] = None,
-        ncols: int = 2,
-        fig_size=(12, 14),
-        ax: Optional[plt.Axes] = None,
-        add_legend: bool = True
-    ):
-        """
-        For a single LaplacePosterior, plot prior (log-normal) and Laplace posteriors
-        (Gaussian + LogNormal) for each parameter.
-        """
-
-        param_names = list(lfit.param_names)
-        nrows = int(np.ceil(len(param_names) / ncols))
-        fig, axes2d, axes = _coerce_axes_grid(ax, nrows, ncols, fig_size)
-
-        gauss_dists = lfit.gaussian_approx
-        logn_dists = lfit.lognormal_approx
-
-        for i, name in enumerate(param_names):
-            ax = axes[i]
-            ax.set_title(name)
-            ax.set_yticks([])
-
-            # Prior
-            if prior_mu is not None and prior_sigma is not None:
-                cls.plot_prior_only(
-                    ax=ax,
-                    mu=prior_mu.get_from_iterator_name(name),
-                    sigma=prior_sigma.get_from_iterator_name(name),
-                    interval=prior_pdf_interval,
-                    color="blue",
-                    label="Prior (log-normal)",
-                    linewidth=1,
-                )
-                # q_lo, q_hi = prior_pdf_interval or (0.001, 0.999)
-                # xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
-                # # get the parameter corresponding to name
-                # mu0 = prior_mu.get_from_iterator_name(name)
-                # sigma0 = prior_sigma.get_from_iterator_name(name)
-                # prior = cls._prior_dist_for(mu0, sigma0)
-                # x_prior = np.linspace(prior.ppf(prior_pdf_interval[0]), prior.ppf(prior_pdf_interval[1]), 500)
-                # y_prior = prior.pdf(x_prior)
-                # ax.plot(x_prior, y_prior, label="Prior (log-normal)", color="blue", linewidth=1)
-
-            # Posterior (Gaussian, physical units)
-            g = gauss_dists[i]
-            g_mean, g_std = g.mean(), g.std()
-            xg = np.linspace(g_mean - 4 * g_std, g_mean + 4 * g_std, 500)
-            yg = g.pdf(xg)
-            ax.plot(xg, yg, label="Laplace Posterior (Gaussian)", color="orange", linewidth=1)
-
-            # Posterior (LogNormal, physical units)
-            ln = logn_dists[i]
-            xl = np.linspace(ln.ppf(0.001), ln.ppf(0.999), 500)
-            yl = ln.pdf(xl)
-            ax.plot(xl, yl, label="Laplace Posterior (log-normal)", color="black", linewidth=2)
-
-            # Markers
-            mu_post = float(lfit.theta_phys[i].cpu().numpy())  # MAP in physical units
-            ax.axvline(mu_post, color="purple", linestyle="-.", label="MAP Estimate", linewidth=1)
-            if true_params is not None:
-                true_val = true_params.get_from_iterator_name(name)
-                ax.axvline(true_val, color="red", linestyle="--", label="TRUE", linewidth=1)
-
-            # optional: other run estimates (if you want to add later)
-            # if runs_ordered:
-            #     for lbl, run in runs_ordered.items():
-            #         est = getattr(run.best_parameters, name)
-            #         ax.axvline(est, linestyle=":", label=f"{lbl} estimate", linewidth=1)
-
-            cls._format_axis(ax, name)
-            if add_legend:
-                ax.legend(fontsize="x-small", loc="upper right")
-
-        # hide any extra axes
-        for j in range(len(param_names), len(axes)):
-            axes[j].axis("off")
-
-        fig.suptitle("Prior (log-normal) and Laplace Posterior for Each Parameter", fontsize=16)
-        fig.tight_layout()
-        fig.subplots_adjust(top=0.95)
-        return fig, axes
-
-    @classmethod
     def plot_single_laplace_posterior(
-        cls,
-        param_name: str,
-        lfit: "LaplacePosterior",
-        ax: plt.Axes,
+        self,
         label: str,
+        param_name: str,
+        ax: Optional[plt.Axes | None] = None,
+        label_name: Optional[str | None] = None,
         distribution_type: Literal["log-normal", "gaussian"] = "log-normal",
         color: Optional[str] = None,
         linestyle: str = "-",
@@ -880,45 +725,41 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         marker_kwargs: Optional[dict] = None,
         pdf_interval: Optional[Tuple[float, float]] = None,
         prior_pdf_interval: Optional[Tuple[float, float]] = None,
-        add_legend: bool = True,
+        add_legend: bool = False,  # <- let place_shared_legend handle legends
     ):
         """
         Plot one posterior PDF (Gaussian or LogNormal) for a single parameter.
         Uses LaplacePosterior's distributions in physical units.
         """
-        try:
-            idx = lfit.param_names.index(param_name)
-        except ValueError:
-            raise ValueError(
-                f"Parameter '{param_name}' not found in lfit.param_names={lfit.param_names}"
-            )
+        # check the label is present in the lfits
+        if label not in self.lfits:
+            raise ValueError(f"Label '{label}' not found in lfits.")
+        if param_name not in self.lfits[label].param_names:
+            raise ValueError(f"Parameter '{param_name}' not found in lfits[label].param_names")
+
+        lfit = self.lfits[label]
+        idx = lfit.param_names.index(param_name)
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 4), constrained_layout=True)
+        else:
+            fig = ax.figure
 
         ax.set_title(param_name)
         ax.set_yticks([])
 
         # Optional prior
-        if prior_mu is not None and prior_sigma is not None:
-            cls.plot_prior_only(
+        if (prior_mu is not None) and (prior_sigma is not None):
+            self.plot_prior_only(
                 ax=ax,
-                prior_mu=prior_mu,
-                prior_sigma=prior_sigma,
-                interval=prior_pdf_interval,
+                mu=prior_mu,  # <- pass floats, not Parameters
+                sigma=prior_sigma,
+                interval=prior_pdf_interval or self.DEFAULT_PDF_INTERVAL,
                 label="Prior (log-normal)",
                 color="black",
-                linewidth=2
+                linewidth=2,
+                show_marker=True,
             )
-            # prior = cls._prior_dist_for(prior_mu, prior_sigma)
-            # q_lo, q_hi = prior_pdf_interval or (0.01, 0.99)
-            # xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
-            # yp = prior.pdf(xp)
-            # (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
-            # line_color = line.get_color() if color is None else color
-            # if show_map_marker:
-            #     y_prior = prior.pdf(prior_mu)
-            #     mk = {"marker": "s", "color": line_color, "s": 30, "zorder": 5}
-            #     if marker_kwargs:
-            #         mk.update(marker_kwargs)
-            #     ax.scatter([prior_mu], [y_prior], **mk)
 
         # Choose posterior style
         if distribution_type == "gaussian":
@@ -927,16 +768,16 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
             x = np.linspace(mean - 4 * std, mean + 4 * std, 500)
         elif distribution_type == "log-normal":
             dist = lfit.lognormal_approx[idx]
-            q_lo, q_hi = pdf_interval or (0.01, 0.99)
+            q_lo, q_hi = pdf_interval or self.DEFAULT_PDF_INTERVAL
             x = np.linspace(dist.ppf(q_lo), dist.ppf(q_hi), 500)
         else:
             raise ValueError("distribution_type must be 'gaussian' or 'log-normal'.")
 
-        color = color or cls.get_safecolor()
+        color = color or self.get_safecolor()
 
         (line,) = ax.plot(
-            x, dist.pdf(x), label=label, color=color, linewidth=linewidth, linestyle=linestyle
-            )
+            x, dist.pdf(x), label=label_name or label, color=color, linewidth=linewidth, linestyle=linestyle
+        )
         line_color = line.get_color() if color is None else color
 
         # MAP marker (at physical MAP value)
@@ -951,15 +792,17 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         if true_param is not None:
             ax.axvline(true_param, color="red", linestyle="--", label="TRUE", linewidth=1)
 
-        cls._format_axis(ax, param_name)
+        self._format_abs_axis_with_unit(ax, param_name)
+
+        # No per-axes legend; shared legend is placed by plot_laplace_posteriors
         if add_legend:
             ax.legend(fontsize="x-small", loc="upper right")
+
         return ax
 
-    @classmethod
-    def plot_all_laplace_posteriors_grid(
-        cls,
-        lfits: Dict[str, "LaplacePosterior"],  # label -> posterior
+
+    def plot_laplace_posteriors(
+        self,
         true_params: Optional[Parameters] = None,
         prior_mu: Optional[Parameters] = None,
         prior_sigma: Optional[Parameters] = None,
@@ -970,85 +813,102 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         linestyle: str = "-",
         linewidth: float = 1.0,
         ncols: int = 2,
-        fig_size=(12, 14),
+        figsize=(10, 8),
         prior_pdf_interval: Optional[Tuple[float, float]] = None,
-        add_legend: bool = True
+        pdf_interval: Optional[Tuple[float, float]] = None,
+        add_legend: bool = True,
     ):
         """
         Plot PDFs for all parameters in a grid, overlaying multiple Laplace posteriors.
         Prior and true-value marker are drawn once per subplot.
+        Colors are consistent **per label** across the whole figure.
         """
         # Use the first posterior as reference for parameter names/order
-        if not lfits:
-            raise ValueError("lfits is empty.")
-        first = next(iter(lfits.values()))
+        first = next(iter(self.lfits.values()))
         param_names = list(first.param_names)
 
         nrows = int(np.ceil(len(param_names) / ncols))
-        fig, axes2d, axes = _coerce_axes_grid(ax, nrows, ncols, fig_size)
+        fig, axes2d, axes = _coerce_axes_grid(ax, nrows, ncols, figsize)
+
+        # Build consistent color mapping per label (skip the ones we won't plot)
+        skip_set = set(skip_labels)
+        labels_to_plot = [lbl for lbl in self.lfits.keys() if lbl not in skip_set]
+        if color is None:
+            cyc = self._safe_color_generator()
+            label_to_color = {lbl: next(cyc) for lbl in labels_to_plot}
+        else:
+            # if a single color is given, use it for all (not typical)
+            label_to_color = {lbl: color for lbl in labels_to_plot}
+
+        used_axes = []
 
         for i, name in enumerate(param_names):
-            ax = axes[i]
-            ax.grid(True, which="both", linestyle="--", linewidth=0.5)
-            ax.set_title(name)
-            ax.set_yticks([])
+            ax_i = axes[i]
+            used_axes.append(ax_i)
+            ax_i.grid(True, which="both", linestyle="--", linewidth=0.5)
+            ax_i.set_title(name)
+            ax_i.set_yticks([])
 
-            # Prior once
-            if prior_mu is not None and prior_sigma is not None:
+            # Prior once (correctly pass scalars)
+            if (prior_mu is not None) and (prior_sigma is not None):
                 mu0 = prior_mu.get_from_iterator_name(name)
                 sigma0 = prior_sigma.get_from_iterator_name(name)
-                cls.plot_prior_only(
-                    ax=ax,
-                    prior_mu=prior_mu,
-                    prior_sigma=prior_sigma,
-                    interval=prior_pdf_interval,
-                    label="Prior (log-normal)",
+                self.plot_prior_only(
+                    ax=ax_i,
+                    mu=mu0,
+                    sigma=sigma0,
+                    interval=prior_pdf_interval or self.DEFAULT_PDF_INTERVAL,
+                    label=("Prior (log-normal)" if i == 0 else None),  # label only once
                     color="black",
-                    linewidth=2
+                    linewidth=2,
                 )
-                # prior = cls._prior_dist_for(mu0, sigma0)
-                # q_lo, q_hi = prior_pdf_interval or (0.01, 0.99)
-                # xp = np.linspace(prior.ppf(q_lo), prior.ppf(q_hi), 500)
-                # yp = prior.pdf(xp)
-                # (line,) = ax.plot(xp, yp, label="Prior (log-normal)", color="black", linewidth=2)
-                # line_color = line.get_color()
-                # y_prior = prior.pdf(mu0)
-                # mk = {"marker": "s", "color": line_color, "s": 30, "zorder": 5, "label": "None"}
-                # ax.scatter([mu0], [y_prior], **mk)
 
             # TRUE once
             if true_params is not None:
                 true_val = true_params.get_from_iterator_name(name)
-                ax.axvline(true_val, color="red", linestyle="--", label="TRUE", linewidth=1)
-
-            # Plot each posterior
-            for lbl, lfit in lfits.items():
-                if lbl in set(skip_labels):
-                    continue
-                cls.plot_single_laplace_posterior(
-                    param_name=name,
-                    lfit=lfit,
-                    ax=ax,
-                    label=lbl,
-                    distribution_type=distribution_type,
-                    color=color,
-                    linestyle=linestyle,
-                    linewidth=linewidth,
-                    pdf_interval=prior_pdf_interval,
-                    show_map_marker=True,
-                    marker_kwargs={"label": None},  # avoid duplicate legend entries
-                    add_legend=False,
+                ax_i.axvline(
+                    true_val,
+                    color="red",
+                    linestyle="--",
+                    label=("TRUE" if i == 0 else None),
+                    linewidth=1,
                 )
 
-            cls._format_axis(ax, name)
-            if add_legend:
-                ax.legend(fontsize="x-small", loc="upper right")
+            # Plot each posterior with the **same color per label**
+            for lbl in labels_to_plot:
+                self.plot_single_laplace_posterior(
+                    label=lbl,
+                    param_name=name,
+                    ax=ax_i,
+                    distribution_type=distribution_type,
+                    color=label_to_color[lbl],
+                    linestyle=linestyle,
+                    linewidth=linewidth,
+                    pdf_interval=pdf_interval,
+                    show_map_marker=True,
+                    marker_kwargs={"label": None},  # avoid extra legend entries
+                    add_legend=add_legend,
+                )
+
+            self._format_abs_axis_with_unit(ax_i, name)
 
         # hide extras
         for j in range(len(param_names), len(axes)):
             axes[j].axis("off")
+            
+        if add_legend:
+            place_shared_legend(
+                fig,
+                axes,
+                legend_title="Posteriors:",
+                frameon=True,
+                empty_slot_only=True,  # if a spare axis exists it will be used
+                title_fontsize=None,
+                bbox_to_anchor_horizontal=0.5,
+                bbox_to_anchor_vertical=-0.08,
+            )
 
         fig.suptitle("Laplace Posteriors", fontsize=16)
         fig.tight_layout()
-        fig.subplots_adjust(top=0.95)
+        fig.subplots_adjust(top=0.92)
         return fig, axes

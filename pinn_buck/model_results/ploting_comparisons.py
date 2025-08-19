@@ -9,7 +9,7 @@ from .plotting_single_run import (
     plot_tracked_parameters,
     plot_final_percentage_error_multi,
 )
-from ..plot_aux import place_shared_legend
+from ..plot_aux import place_shared_legend, _reserve_bottom_space_for_legend
 from ..constants import MeasurementGroupArchive
 
 Experiment = str
@@ -235,7 +235,7 @@ class ResultsComparerTwo:
         suptitle: Optional[str] = "Final Percentage Error",
         titles: Optional[Tuple[str, str]] = None,
         sharey: bool = True,
-        legend_bbox_to_anchor_vertical: float = -0.1,
+        legend_bottom_inch: float = 0.15,
     ):
         expA, expB = self._normalize_experiments(experiments)
         runsA = self.run_dictionary[expA]
@@ -258,7 +258,8 @@ class ResultsComparerTwo:
                 ax=ax,
             )
             ax.set_title((titles[0] if titles else expA) if titles else expA)
-            ax.legend(loc="lower center", bbox_to_anchor=(0.5, legend_bbox_to_anchor_vertical), ncol=6)
+            _reserve_bottom_space_for_legend(fig, extra_bottom_inch=legend_bottom_inch)
+            ax.legend(loc="lower center", bbox_to_anchor=(0.5, 0), ncol=6)
             if suptitle:
                 fig.suptitle(suptitle, fontsize=16)
             return fig, ax
@@ -299,9 +300,9 @@ class ResultsComparerTwo:
         ax[1].set_ylabel("")
         place_shared_legend(
             fig,
-            ax.ravel(),
+            ax,
             empty_slot_only=False,
-            bbox_to_anchor_vertical=legend_bbox_to_anchor_vertical,
+            legend_bottom_inch=legend_bottom_inch,
         )
         return fig, ax
 
@@ -319,7 +320,7 @@ class ResultsComparerTwo:
         legend_fontsize: Optional[int] = 12,
         legend_ncol: Optional[int] = None,
         legend_frameon: Optional[bool] = False,
-        legend_bbox_to_anchor_vertical=-0.5,
+        legend_bottom_inch: float = 0.15,
         skip_elements: Tuple[str, ...] = ("callbacks",),
         **kwargs,
     ):
@@ -423,7 +424,7 @@ class ResultsComparerTwo:
                 title_fontsize=legend_fontsize,
                 frameon=legend_frameon,
                 ncol=legend_ncol,
-                bbox_to_anchor_vertical=legend_bbox_to_anchor_vertical,
+                legend_bottom_inch=legend_bottom_inch,
             )
 
         return first_fig_ax if first_fig_ax is not None else (None, ax)

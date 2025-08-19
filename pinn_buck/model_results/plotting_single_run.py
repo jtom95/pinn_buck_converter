@@ -294,7 +294,7 @@ def plot_final_percentage_error_multi(
 
     ax.set_ylabel("Percentage Error (%)")
     ax.set_title("Final Percentage Error of Parameters")
-    ax.legend(title="Run", ncol=min(len(runs), 4))  # tweak ncol as you like
+    ax.legend(title="Run")  # tweak ncol as you like
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
 
     return ax
