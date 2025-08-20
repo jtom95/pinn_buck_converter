@@ -587,7 +587,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         legend_frameon: bool = True,
         legend_title_fontsize: Optional[int] = None,
         legend_bbox_to_anchor_horizontal: Optional[float] = 0.5,
-        legend_bbox_to_anchor_vertical: Optional[float] = -0.15,
+        legend_bottom_inch: Optional[float] = 0.15,
     ):
         """
         One subplot per parameter; inside each subplot, draw one CI bar per label.
@@ -697,8 +697,8 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
             title_fontsize=legend_title_fontsize,
             ncol=legend_ncol,
             bbox_to_anchor_horizontal=legend_bbox_to_anchor_horizontal,
-            bbox_to_anchor_vertical=legend_bbox_to_anchor_vertical,
-            empty_slot_only=True,  
+            legend_bottom_inch=legend_bottom_inch,
+            empty_slot_only=True,
         )
 
         if title is None:
@@ -817,6 +817,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         prior_pdf_interval: Optional[Tuple[float, float]] = None,
         pdf_interval: Optional[Tuple[float, float]] = None,
         add_legend: bool = True,
+        legend_bottom_inch: float = 0.15
     ):
         """
         Plot PDFs for all parameters in a grid, overlaying multiple Laplace posteriors.
@@ -905,7 +906,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
                 empty_slot_only=True,  # if a spare axis exists it will be used
                 title_fontsize=None,
                 bbox_to_anchor_horizontal=0.5,
-                bbox_to_anchor_vertical=-0.08,
+                legend_bottom_inch=legend_bottom_inch,
             )
 
         fig.suptitle("Laplace Posteriors", fontsize=16)

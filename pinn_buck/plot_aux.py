@@ -5,6 +5,8 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 import numpy as np
 
+import weakref
+
 _SI_PREFIX = {
     -24: "y",
     -21: "z",
@@ -26,43 +28,53 @@ _SI_PREFIX = {
 }
 
 
-def _apply_eng_label_only(ax: plt.Axes, base_unit: str) -> None:
+def _apply_eng_label_only(ax: plt.Axes, base_unit: str, reactive: bool = True) -> None:
     """
-    Auto-choose an SI prefix from current x-limits (multiple of 1e3),
-    put it in the x-axis *label* like '[mV]', and show tick numbers in that scale.
+    Fast variant:
+      - formatter divides by cached 'scale'
+      - recompute only if 10^3 prefix bin changes
+      - no draw() calls from inside callbacks
     """
+    state = {"exp3": None, "scale": 1.0, "prefix": ""}
 
-    def _update(_evt=None):
-        # choose scale from current ticks (or xlims if ticks not ready)
-        ticks = ax.get_xticks()
-        if len(ticks) == 0 or not np.isfinite(ticks).any():
-            x0, x1 = ax.get_xlim()
-            magsrc = max(abs(x0), abs(x1))
-        else:
-            magsrc = max(abs(t) for t in ticks if np.isfinite(t)) or 0.0
+    def _choose_exp3_from_xlim():
+        x0, x1 = ax.get_xlim()
+        magsrc = max(abs(x0), abs(x1))
+        if not np.isfinite(magsrc) or magsrc <= 0:
+            return 0
+        e3 = int(np.floor(np.log10(magsrc) / 3.0) * 3)
+        return min(24, max(-24, e3))
 
-        if magsrc <= 0:
-            exp3 = 0
-        else:
-            exp3 = int(np.floor(np.log10(magsrc) / 3.0) * 3)
-            exp3 = min(24, max(-24, exp3))  # clamp to supported prefixes
+    def _apply(exp3: int):
+        if state["exp3"] == exp3:
+            return  # nothing to do
+        state["exp3"] = exp3
+        state["scale"] = 10.0**exp3
+        state["prefix"] = _SI_PREFIX.get(exp3, "")
+        # label with unit+prefix; ticks are plain numbers in that scale
+        ax.set_xlabel(f"[{state['prefix']}{base_unit}]")
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=4, prune="both"))
 
-        scale = 10.0**exp3
-        prefix = _SI_PREFIX.get(exp3, "")
+    # formatter uses the current cached scale; this is super cheap
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{x/state['scale']:g}"))
 
-        # formatter: numbers only, already divided by the chosen scale
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{x/scale:g}"))
-        ax.set_xlabel(f"[{prefix}{base_unit}]")
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
+    # initial apply
+    _apply(_choose_exp3_from_xlim())
 
-        # ask for a redraw without infinite recursion
-        ax.figure.canvas.draw_idle()
+    if not reactive:
+        return  # static label/formatter, fastest path
 
-    # Update on draw and whenever x-lims change (zoom/pan)
-    ax.callbacks.connect("xlim_changed", lambda a: _update())
-    ax.figure.canvas.mpl_connect("draw_event", _update)
+    # Recompute only when x-lims cross a 10^3 bin boundary
+    aref = weakref.ref(ax)
 
-    _update()  # initial
+    def _on_xlim_changed(a):
+        a = aref()
+        if a is None:
+            return
+        _apply(_choose_exp3_from_xlim())
+        # no draw_idle() here — let the frontend trigger redraws
+
+    ax.callbacks.connect("xlim_changed", _on_xlim_changed)
 
 
 def _layout_engine_kind(fig) -> str:

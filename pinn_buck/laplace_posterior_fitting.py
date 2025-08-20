@@ -155,9 +155,9 @@ class LaplacePosterior:
         # if it doesn't end in .laplace.json add it. If it just finishes in .json make it .laplace.json
         if not path.name.endswith(file_pattern):
             if path.name.endswith(".json"):
-                path = path.with_name(path.stem + file_pattern)
+                path = path.with_name(path.stem + file_pattern[1:])
             else:
-                path = path.with_suffix(file_pattern)
+                path = path.with_suffix(file_pattern[1:])
 
         data = {
             "theta_log": self.theta_log.detach().cpu().numpy().tolist(),
