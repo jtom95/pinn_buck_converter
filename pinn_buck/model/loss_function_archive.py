@@ -1,6 +1,6 @@
 from typing import Callable, Optional, Tuple, Union
 import torch
-from ..config import Parameters
+from ..parameters.parameter_class import Parameters
 from .loss_function_configs import LikelihoodLossFunction, PriorLossFunction, LossFunctionFactory
 from ..parameter_transformation import make_log_param
 from .residuals import ResidualFunc, basic_residual

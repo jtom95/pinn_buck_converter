@@ -17,7 +17,7 @@ from pinn_buck.constants import ParameterConstants
 import itertools
 
 from .laplace_posterior_fitting import LaplacePosterior
-from .config import Parameters
+from .parameters.parameter_class import Parameters
 from .plot_aux import place_shared_legend, _apply_eng_label_only
 
 

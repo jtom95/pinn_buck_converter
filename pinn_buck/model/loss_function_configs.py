@@ -2,7 +2,7 @@ from typing import Callable, Tuple, Optional, Union
 import torch
 from abc import ABC, abstractmethod
 
-from ..config import Parameters
+from ..parameters.parameter_class import Parameters
 from .residuals import ResidualFunc
 
 class LikelihoodLossFunction(ABC):

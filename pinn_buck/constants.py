@@ -1,4 +1,4 @@
-from .config import Parameters
+from .parameters.parameter_class import Parameters
 from typing import Mapping, Final
 from types import MappingProxyType
 

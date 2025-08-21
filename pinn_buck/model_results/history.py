@@ -3,7 +3,7 @@ from typing import List, NamedTuple, Optional
 import pandas as pd
 import ast
 
-from ..config import Parameters
+from ..parameters.parameter_class import Parameters
 
 
 class TrainingHistory:

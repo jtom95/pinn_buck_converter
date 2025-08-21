@@ -5,7 +5,7 @@ from typing import Callable, Tuple, List, Optional
 import torch
 
 from ..model_results.history import TrainingHistory
-from ..config import Parameters
+from ..parameters.parameter_class import Parameters
 
 from .model_param_estimator import BaseBuckEstimator
 from .map_loss import MAPLoss

@@ -4,7 +4,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-from .config import Parameters, TrainingHistory
+from .parameters.parameter_class import Parameters, TrainingHistory
 from .io import Measurement
 
 

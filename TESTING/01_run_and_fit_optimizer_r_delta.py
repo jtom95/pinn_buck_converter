@@ -13,7 +13,7 @@ import numpy as np
 sys.path.append(str(Path.cwd()))
 
 
-from pinn_buck.config import Parameters
+from pinn_buck.parameters.parameter_class import Parameters
 from pinn_buck.constants import ParameterConstants
 
 # load measurement interface
@@ -35,7 +35,7 @@ from pinn_buck.io import LoaderH5
 
 # %%
 from scipy.stats import lognorm
-from pinn_buck.config import Parameters
+from pinn_buck.parameters.parameter_class import Parameters
 
 
 # Nominals and linear-space relative tolerances

@@ -11,10 +11,10 @@ from scipy.special import erf
 import numpy as np
 
 from .model.map_loss import MAPLoss
-from .config import Parameters
+from .parameters.parameter_class import Parameters
 from .constants import ParameterConstants
 from .model.model_param_estimator import BaseBuckEstimator
-from .config import Parameters
+from .parameters.parameter_class import Parameters
 
 def _sigma_to_quantiles(n_sigma: float):
     """

@@ -2,7 +2,7 @@ from typing import Iterable, List, Dict, Union, Tuple
 
 import pandas as pd
 import matplotlib.pyplot as plt
-from ..config import Parameters
+from ..parameters.parameter_class import Parameters
 from .history import TrainingHistory
 import numpy as np
 from matplotlib.transforms import blended_transform_factory as blend

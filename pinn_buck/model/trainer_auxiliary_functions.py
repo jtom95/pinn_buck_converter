@@ -1,7 +1,7 @@
 import torch
 
 from pinn_buck.model import trainer
-from ..config import Parameters
+from ..parameters.parameter_class import Parameters
 from .model_param_estimator import BaseBuckEstimator
 from .residuals import ResidualFunc
 from .residual_time_correlation import ResidualDiagnosticsGaussian

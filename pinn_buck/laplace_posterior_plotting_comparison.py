@@ -11,7 +11,7 @@ from .laplace_posterior_plotting import LaplacePosteriorPlotter, LaplaceDictiona
 from .constants import MeasurementGroupArchive
 from .laplace_posterior_fitting import LaplacePosterior
 from .plot_aux import place_shared_legend
-from .config import Parameters
+from .parameters.parameter_class import Parameters
 
 
 Experiment = str

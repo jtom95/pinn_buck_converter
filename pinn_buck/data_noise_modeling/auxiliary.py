@@ -1,5 +1,5 @@
 import torch
-from ..config import Parameters
+from ..parameters.parameter_class import Parameters
 
 
 def rel_tolerance_to_sigma(

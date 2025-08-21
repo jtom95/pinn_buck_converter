@@ -97,7 +97,7 @@ class ResidualDiagnosticsGaussian:
         unbiased: bool = False,
         bartlett: bool = True,
         bandwidth_rule: str = "n13",  # "n13" => M = floor(1.5 * N^(1/3))
-        renorm_mode: str = "corr_shrink",  # "none" | "std" | "matrix" | "corr_shrink"
+        renorm_mode: Literal["none", "std", "matrix", "corr_shrink"] = "corr_shrink",
         beta_corr: float = 0.1,  # used by "corr_shrink" (light whitening of correlation)
     ) -> torch.Tensor:
         """
@@ -183,79 +183,79 @@ class ResidualDiagnosticsGaussian:
         vif = 1.0 + (2.0 / d) * s
         return vif
 
-    @torch.no_grad()
-    def quadloss_vif_from_residuals1(
-        self,
-        max_lag: int | None = None,
-        shrinkage_alpha: float = 0.2,
-        jitter: float = 1e-8,
-        unbiased: bool = False,
-        bartlett: bool = True,
-        bandwidth_rule: str = "n13",  # "n13" => M = floor(1.5*N^(1/3))
-    ) -> torch.Tensor:
-        """
-        VIF for quadratic loss using *empirical* instantaneous covariance per transient.
+    # @torch.no_grad()
+    # def quadloss_vif_from_residuals1(
+    #     self,
+    #     max_lag: int | None = None,
+    #     shrinkage_alpha: float = 0.2,
+    #     jitter: float = 1e-8,
+    #     unbiased: bool = False,
+    #     bartlett: bool = True,
+    #     bandwidth_rule: str = "n13",  # "n13" => M = floor(1.5*N^(1/3))
+    # ) -> torch.Tensor:
+    #     """
+    #     VIF for quadratic loss using *empirical* instantaneous covariance per transient.
 
-        Steps per transient:
-        1) Center residuals over time.
-        2) Compute empirical lag-0 covariance S_t.
-        3) Shrink S_t toward I:  S_sh = (1-a) I + a S_t.
-        4) Whiten by chol(S_sh)^{-1}.
-        5) Compute lag-k cross-covariances P_k of whitened series.
-        6) VIF = 1 + (2/d) * sum_k w_k * ||P_k||_F^2
+    #     Steps per transient:
+    #     1) Center residuals over time.
+    #     2) Compute empirical lag-0 covariance S_t.
+    #     3) Shrink S_t toward I:  S_sh = (1-a) I + a S_t.
+    #     4) Whiten by chol(S_sh)^{-1}.
+    #     5) Compute lag-k cross-covariances P_k of whitened series.
+    #     6) VIF = 1 + (2/d) * sum_k w_k * ||P_k||_F^2
 
-        Args:
-            max_lag: if None, use bandwidth_rule (default M = floor(1.5 * N^(1/3))).
-            shrinkage_alpha: shrinkage toward I in [0,1].
-            jitter: tiny diagonal added before Cholesky.
-            unbiased: apply N/(N-k) factor (optional).
-            bartlett: use Bartlett taper.
-            bandwidth_rule: currently "n13" only.
+    #     Args:
+    #         max_lag: if None, use bandwidth_rule (default M = floor(1.5 * N^(1/3))).
+    #         shrinkage_alpha: shrinkage toward I in [0,1].
+    #         jitter: tiny diagonal added before Cholesky.
+    #         unbiased: apply N/(N-k) factor (optional).
+    #         bartlett: use Bartlett taper.
+    #         bandwidth_rule: currently "n13" only.
 
-        Returns:
-            vif: (T,)
-        """
-        N, T, d = self.residuals.shape
-        assert d == 2, "expected 2 channels"
-        if max_lag is None:
-            if bandwidth_rule == "n13":
-                M = max(1, int(1.5 * (N ** (1.0 / 3.0))))
-            else:
-                M = max(1, int(1.5 * (N ** (1.0 / 3.0))))
-            M = min(M, N - 1)
-        else:
-            M = max(1, min(max_lag, N - 1))
+    #     Returns:
+    #         vif: (T,)
+    #     """
+    #     N, T, d = self.residuals.shape
+    #     assert d == 2, "expected 2 channels"
+    #     if max_lag is None:
+    #         if bandwidth_rule == "n13":
+    #             M = max(1, int(1.5 * (N ** (1.0 / 3.0))))
+    #         else:
+    #             M = max(1, int(1.5 * (N ** (1.0 / 3.0))))
+    #         M = min(M, N - 1)
+    #     else:
+    #         M = max(1, min(max_lag, N - 1))
 
-        # center over time
-        y = self.residuals - self.residuals.mean(dim=0, keepdim=True)  # (N,T,2)
+    #     # center over time
+    #     y = self.residuals - self.residuals.mean(dim=0, keepdim=True)  # (N,T,2)
 
-        # empirical instantaneous covariance per transient
-        S = torch.einsum("ntc,ntd->tcd", y, y) / N  # (T,2,2)
-        I = torch.eye(d, dtype=y.dtype, device=y.device).expand_as(S)
-        S_sh = (1 - shrinkage_alpha) * I + shrinkage_alpha * S
-        S_sh = S_sh + jitter * I
+    #     # empirical instantaneous covariance per transient
+    #     S = torch.einsum("ntc,ntd->tcd", y, y) / N  # (T,2,2)
+    #     I = torch.eye(d, dtype=y.dtype, device=y.device).expand_as(S)
+    #     S_sh = (1 - shrinkage_alpha) * I + shrinkage_alpha * S
+    #     S_sh = S_sh + jitter * I
 
-        # whiten by chol(S_sh)^{-1}
-        L = torch.linalg.cholesky(S_sh)  # (T,2,2)
-        yT = y.permute(1, 2, 0)  # (T,2,N)
-        y_wT = torch.linalg.solve_triangular(L, yT, upper=False)  # (T,2,N)
-        y_w = y_wT.permute(2, 0, 1)  # (N,T,2)
+    #     # whiten by chol(S_sh)^{-1}
+    #     L = torch.linalg.cholesky(S_sh)  # (T,2,2)
+    #     yT = y.permute(1, 2, 0)  # (T,2,N)
+    #     y_wT = torch.linalg.solve_triangular(L, yT, upper=False)  # (T,2,N)
+    #     y_w = y_wT.permute(2, 0, 1)  # (N,T,2)
 
-        # Bartlett weights (or flat)
-        w = torch.ones((M,), dtype=y.dtype, device=y.device)
-        if bartlett:
-            w = 1.0 - torch.arange(1, M + 1, device=y.device, dtype=y.dtype) / (M + 1)
+    #     # Bartlett weights (or flat)
+    #     w = torch.ones((M,), dtype=y.dtype, device=y.device)
+    #     if bartlett:
+    #         w = 1.0 - torch.arange(1, M + 1, device=y.device, dtype=y.dtype) / (M + 1)
 
-        # accumulate ||P_k||_F^2
-        s = torch.zeros((T,), dtype=y.dtype, device=y.device)
-        for k in range(1, M + 1):
-            Pk = torch.einsum("ntc,ntd->tcd", y_w[k:], y_w[:-k]) / (N - k)  # (T,2,2)
-            if unbiased:
-                Pk = (N / (N - k)) * Pk
-            s = s + w[k - 1] * (torch.linalg.norm(Pk, ord="fro", dim=(1, 2)) ** 2)
+    #     # accumulate ||P_k||_F^2
+    #     s = torch.zeros((T,), dtype=y.dtype, device=y.device)
+    #     for k in range(1, M + 1):
+    #         Pk = torch.einsum("ntc,ntd->tcd", y_w[k:], y_w[:-k]) / (N - k)  # (T,2,2)
+    #         if unbiased:
+    #             Pk = (N / (N - k)) * Pk
+    #         s = s + w[k - 1] * (torch.linalg.norm(Pk, ord="fro", dim=(1, 2)) ** 2)
 
-        vif = 1.0 + (2.0 / d) * s
-        return vif
+    #     vif = 1.0 + (2.0 / d) * s
+    #     return vif
     
     @torch.no_grad()
     def quadloss_vif_from_residuals_theoretical_Sigma(
@@ -359,70 +359,70 @@ class ResidualDiagnosticsGaussian:
         vif = 1.0 + (2.0 / d) * s
         return vif
 
-    @torch.no_grad()
-    def quadloss_vif_from_residuals_theoretical_Sigma1(
-        self, L_r: torch.Tensor, 
-        max_lag: int | None = None, 
-        use_std_renorm: bool = True,
-        beta_corr: float = 0.1,
-        unbiased: bool = False
-        ) -> torch.Tensor:
-        """
-        Variance inflation factor (VIF) for the quadratic loss sum_n r_n^T Sigma_r^{-1} r_n.
+    # @torch.no_grad()
+    # def quadloss_vif_from_residuals_theoretical_Sigma1(
+    #     self, L_r: torch.Tensor, 
+    #     max_lag: int | None = None, 
+    #     use_std_renorm: bool = True,
+    #     beta_corr: float = 0.1,
+    #     unbiased: bool = False
+    #     ) -> torch.Tensor:
+    #     """
+    #     Variance inflation factor (VIF) for the quadratic loss sum_n r_n^T Sigma_r^{-1} r_n.
 
-        Steps:
-            1) Whiten instantaneous correlation via Cholesky of Sigma_r: L_r
-            2) Compute lag-k cross-correlation matrix P_k of whitened y_n in each transient
-            3) VIF = 1 + (2/d) * sum_k ||P_k||_F^2,   d=2
+    #     Steps:
+    #         1) Whiten instantaneous correlation via Cholesky of Sigma_r: L_r
+    #         2) Compute lag-k cross-correlation matrix P_k of whitened y_n in each transient
+    #         3) VIF = 1 + (2/d) * sum_k ||P_k||_F^2,   d=2
 
-        Args:
-            residuals: (N, T, 2)
-            Sigma_r:   (2, 2) positive definite
-            max_lag:   number of lags to include (<= N-1)
+    #     Args:
+    #         residuals: (N, T, 2)
+    #         Sigma_r:   (2, 2) positive definite
+    #         max_lag:   number of lags to include (<= N-1)
 
-        Returns:
-            vif: (T,) variance inflation factor per transient (>=1)
-        """
-        N, T, d = self.residuals.shape
-        if max_lag is None:
-            M = max(1, int(1.5 * (N ** (1.0 / 3.0))))
-            M = min(M, N - 1)
-        else:
-            M = max(1, min(max_lag, N - 1))
+    #     Returns:
+    #         vif: (T,) variance inflation factor per transient (>=1)
+    #     """
+    #     N, T, d = self.residuals.shape
+    #     if max_lag is None:
+    #         M = max(1, int(1.5 * (N ** (1.0 / 3.0))))
+    #         M = min(M, N - 1)
+    #     else:
+    #         M = max(1, min(max_lag, N - 1))
 
-        rT = self.residuals.permute(1, 2, 0)                     # (T, d, N)
-        yT = torch.linalg.solve_triangular(L_r, rT, upper=False) # (T, d, N)
-        y  = yT.permute(2, 0, 1)                                 # (N, T, d)
+    #     rT = self.residuals.permute(1, 2, 0)                     # (T, d, N)
+    #     yT = torch.linalg.solve_triangular(L_r, rT, upper=False) # (T, d, N)
+    #     y  = yT.permute(2, 0, 1)                                 # (N, T, d)
 
-        # center over time index N
-        y = y - y.mean(dim=0, keepdim=True)
+    #     # center over time index N
+    #     y = y - y.mean(dim=0, keepdim=True)
 
-        if use_std_renorm:
-            std = y.std(dim=0, unbiased=False, keepdim=True).clamp_min(1e-12)
-            y = y / std
+    #     if use_std_renorm:
+    #         std = y.std(dim=0, unbiased=False, keepdim=True).clamp_min(1e-12)
+    #         y = y / std
 
-            # 2) light correlation whitening with shrinkage (beta small)
-            # correlation per transient after std renorm
-            R = torch.einsum("ntc,ntd->tcd", y, y) / y.shape[0]          # (T,2,2), diag≈I
-            I = torch.eye(2, dtype=y.dtype, device=y.device).expand_as(R)
-            R_sh = (1 - beta_corr) * I + beta_corr * R
-            L = torch.linalg.cholesky(R_sh + 1e-8 * I)                    # (T,2,2)
+    #         # 2) light correlation whitening with shrinkage (beta small)
+    #         # correlation per transient after std renorm
+    #         R = torch.einsum("ntc,ntd->tcd", y, y) / y.shape[0]          # (T,2,2), diag≈I
+    #         I = torch.eye(2, dtype=y.dtype, device=y.device).expand_as(R)
+    #         R_sh = (1 - beta_corr) * I + beta_corr * R
+    #         L = torch.linalg.cholesky(R_sh + 1e-8 * I)                    # (T,2,2)
 
-            # apply light whitening
-            yT  = y.permute(1,2,0)                                        # (T,2,N)
-            y2T = torch.linalg.solve_triangular(L, yT, upper=False)       # (T,2,N)
-            y   = y2T.permute(2,0,1)    
+    #         # apply light whitening
+    #         yT  = y.permute(1,2,0)                                        # (T,2,N)
+    #         y2T = torch.linalg.solve_triangular(L, yT, upper=False)       # (T,2,N)
+    #         y   = y2T.permute(2,0,1)    
 
-        s = torch.zeros((T,), dtype=y.dtype, device=y.device)
-        for k in range(1, M + 1):
-            w = 1.0 - k / (M + 1)                          # Bartlett
-            Pk = torch.einsum("ntc,ntd->tcd", y[k:], y[:-k]) / (N - k)
-            if unbiased:
-                Pk = (N / (N - k)) * Pk
-            s = s + w * (torch.linalg.norm(Pk, ord="fro", dim=(1, 2)) ** 2)
+    #     s = torch.zeros((T,), dtype=y.dtype, device=y.device)
+    #     for k in range(1, M + 1):
+    #         w = 1.0 - k / (M + 1)                          # Bartlett
+    #         Pk = torch.einsum("ntc,ntd->tcd", y[k:], y[:-k]) / (N - k)
+    #         if unbiased:
+    #             Pk = (N / (N - k)) * Pk
+    #         s = s + w * (torch.linalg.norm(Pk, ord="fro", dim=(1, 2)) ** 2)
 
-        vif = 1.0 + (2.0 / d) * s
-        return vif
+    #     vif = 1.0 + (2.0 / d) * s
+    #     return vif
 
     @torch.no_grad()
     def plot_acf(

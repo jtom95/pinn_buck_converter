@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from pinn_buck.config import Parameters
+from pinn_buck.parameters.parameter_class import Parameters
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
 
 from abc import ABC, abstractmethod
@@ -15,7 +15,7 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from ..config import Parameters
+from ..parameters.parameter_class import Parameters
 from ..io import Measurement
 
 

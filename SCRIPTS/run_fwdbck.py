@@ -14,7 +14,7 @@ project_root = Path.cwd()
 sys.path.append(str(project_root))
 
 
-from pinn_buck.config import Parameters
+from pinn_buck.parameters.parameter_class import Parameters
 from pinn_buck.constants import ParameterConstants
 
 # load measurement interface
@@ -31,7 +31,7 @@ from pinn_buck.io import LoaderH5
 
 # %%
 from scipy.stats import lognorm
-from pinn_buck.config import Parameters
+from pinn_buck.parameters.parameter_class import Parameters
 
 
 PRIOR_SIGMA = rel_tolerance_to_sigma(
