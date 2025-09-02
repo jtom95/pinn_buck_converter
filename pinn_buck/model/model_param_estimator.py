@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch import nn
+import re
 
 from pinn_buck.parameters.parameter_class import Parameters
 from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
@@ -52,17 +53,19 @@ class BaseBuckEstimator(nn.Module, ABC):
 
     def _initialize_log_parameters(self, param_init: Parameters):
         log_params = make_log_param(param_init)
+        
+        self.log_L    = nn.Parameter(torch.as_tensor(log_params.L,    dtype=torch.float32))
+        self.log_RL   = nn.Parameter(torch.as_tensor(log_params.RL,   dtype=torch.float32))
+        self.log_C    = nn.Parameter(torch.as_tensor(log_params.C,    dtype=torch.float32))
+        self.log_RC   = nn.Parameter(torch.as_tensor(log_params.RC,   dtype=torch.float32))
+        self.log_Rdson= nn.Parameter(torch.as_tensor(log_params.Rdson,dtype=torch.float32))
+        self.log_Vin  = nn.Parameter(torch.as_tensor(log_params.Vin,  dtype=torch.float32))
+        self.log_VF   = nn.Parameter(torch.as_tensor(log_params.VF,   dtype=torch.float32))
 
-        self.log_L = nn.Parameter(log_params.L, requires_grad=True)
-        self.log_RL = nn.Parameter(log_params.RL, requires_grad=True)
-        self.log_C = nn.Parameter(log_params.C, requires_grad=True)
-        self.log_RC = nn.Parameter(log_params.RC, requires_grad=True)
-        self.log_Rdson = nn.Parameter(log_params.Rdson, requires_grad=True)
+        # lists
         self.log_Rloads = nn.ParameterList(
-            [nn.Parameter(r, requires_grad=True) for r in log_params.Rloads]
+            [nn.Parameter(torch.as_tensor(r, dtype=torch.float32)) for r in log_params.Rloads]
         )
-        self.log_Vin = nn.Parameter(log_params.Vin, requires_grad=True)
-        self.log_VF = nn.Parameter(log_params.VF, requires_grad=True)
 
     # ----------------------------- helpers -----------------------------
 
@@ -88,14 +91,14 @@ class BaseBuckEstimator(nn.Module, ABC):
         """Return current parameters in physical units."""
         params = self._physical()
         return Parameters(
-            L=params.L.item(),
-            RL=params.RL.item(),
-            C=params.C.item(),
-            RC=params.RC.item(),
-            Rdson=params.Rdson.item(),
-            Rloads=[rload.item() for rload in params.Rloads],
-            Vin=params.Vin.item(),
-            VF=params.VF.item(),
+            L=params.L,
+            RL=params.RL,
+            C=params.C,
+            RC=params.RC,
+            Rdson=params.Rdson,
+            Rloads=[rload for rload in params.Rloads],
+            Vin=params.Vin,
+            VF=params.VF,
         )
 
     def _logparam_name_map(self) -> list[tuple[str, str]]:
@@ -106,7 +109,10 @@ class BaseBuckEstimator(nn.Module, ABC):
         mapping = []
         for disp, _ in self.logparams.iterator():
             if disp.startswith("Rload"):
-                idx = int(disp[5:]) - 1
+                # find numeric character at the END of the string
+                match = re.search(r"\d+$", disp)
+                if match:
+                    idx = int(match.group(0)) - 1
                 stored = f"log_Rloads.{idx}"
             else:
                 stored = f"log_{disp}"

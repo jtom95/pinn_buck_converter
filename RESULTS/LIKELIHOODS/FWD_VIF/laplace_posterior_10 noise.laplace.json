@@ -273,9 +273,9 @@
     "C",
     "RC",
     "Rdson",
-    "Rload1",
-    "Rload2",
-    "Rload3",
+    "Rloads1",
+    "Rloads2",
+    "Rloads3",
     "Vin",
     "VF"
   ]

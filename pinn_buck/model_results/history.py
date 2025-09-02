@@ -1,7 +1,8 @@
 from pathlib import Path
-from typing import List, NamedTuple, Optional
+from typing import List, NamedTuple, Optional, Union
 import pandas as pd
 import ast
+import torch
 
 from ..parameters.parameter_class import Parameters
 
@@ -40,7 +41,7 @@ class TrainingHistory:
         # legacy: check if the df is in the old format
         if row.get("Rloads", None) is None:
             if row.get("Rload1", None) is not None:
-                return Parameters.build_from_all_names_iterator(
+                return Parameters.build_from_flat(
                     map(
                         lambda x: (x[0], float(x[1])),
                         row.items()
@@ -141,9 +142,23 @@ class TrainingHistory:
         callbacks: List[int] = None
     ) -> "TrainingHistory":
         """Create a TrainingHistory from loss and parameter histories."""
+        def _to_float(value: Union[List, float, int, torch.Tensor]) -> Union[List[float], float, int]:
+            if isinstance(value, (float, int)):
+                return float(value)
+            elif isinstance(value, torch.Tensor):
+                return value.item()
+            elif isinstance(value, list):
+                return [_to_float(v) for v in value]
+            else:
+                raise ValueError(f"Cannot convert value of type {type(value)} to float list.")
+
+        params_dict_list = [{k: _to_float(v) for k, v in p.params.items()} for p in param_history]
+        params_keys = params_dict_list[0].keys() if params_dict_list else []
         data = {
             "loss": loss_history,
-            **{name: [getattr(p, name) for p in param_history] for name in Parameters._fields},
+            **{
+                key: [d.get(key) for d in params_dict_list] for key in params_keys
+            }
         }
         df = pd.DataFrame(data)
         if learning_rate is not None:

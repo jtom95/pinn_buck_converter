@@ -368,15 +368,6 @@ for idx, group_number in enumerate(l_dict.keys()):
     laplace_posterior = laplace_posterior_approx.fit(X)
     laplace_posterior.save(out_dir / f"laplace_posterior_{group_name}.json")
     
-    laplace_posterior_hac = laplace_posterior_approx.fit_with_hac(
-        X, 
-        L_r=map_loss.extra_kwargs.get("L", None),
-        residual_fn= map_loss.residual_function
-    )
-    
-    laplace_posteriors_hac[group_name] = laplace_posterior_hac
-    laplace_posterior_hac.save(out_dir / f"laplace_posterior_hac_{group_name}.json")
-
     laplace_posteriors[group_name] = laplace_posterior
     trained_models[group_name] = trainer.optimized_model()
     trained_runs[group_name] = trainer.history

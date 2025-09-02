@@ -1,160 +1,195 @@
-from typing import List, NamedTuple, Mapping, Union, Iterable, Tuple, Final
 import pandas as pd
 import numpy as np
+import torch
+from dataclasses import dataclass, field
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    MutableMapping,
+    Tuple,
+    Union,
+    Optional,
+    Final,
+    FrozenSet
+)
 from pathlib import Path
 import json
+import re
 
-DEFAULT_FILE_PATTERN: Final = "*.params.json"
+Scalar = Union[int, float, torch.Tensor, torch.nn.Parameter]
+Seq = Union[List[Scalar], Tuple[Scalar, ...]]
+Value = Union[Scalar, Seq]
 
-class Parameters(NamedTuple):
-    L: float
-    RL: float
-    C: float
-    RC: float
-    Rdson: float
-    Rloads: List[float] 
-    Vin: float
-    VF: float
 
-    def iterator(self) -> iter:
-        # Function to iterate through the Parameters returning parameter_name, parameter_value.
-        # The tricky part is that Rloads is a list and the iterator should pass each of the values
-        # separately, with name: Rload1, Rload2, etc.
-        for name, value in self._get_params().items():
-            if name == "Rloads":
-                for i, load in enumerate(value):
-                    yield f"Rload{i+1}", load
+def _is_sequence(x: Any) -> bool:
+    if isinstance(x, (str, bytes)):
+        return False
+    return isinstance(x, (list, tuple))
+
+
+class Parameters:
+    DEFAULT_FILE_PATTERN: Final = "*.params.json"
+    _reserved_attrs = {
+        "params", "DEFAULT_FILE_PATTERN", "_reserved_attrs",
+        "iterator", "__len__", "expand", "get_all_values", "get_all_names",
+        "get_from_iterator_name", "save", "load", "_to_jsonable",
+        "from_mapping", "build_from_flat", "__getitem__", "__setitem__",
+        "__delattr__", "__getattr__", "__setattr__", "__dir__", "pop",
+    }
+    params: Dict[str, Value]
+    _frozen_keys: FrozenSet[str]
+
+    def __init__(self, **kwargs: Value):
+        # store params (keys frozen after init)
+        super().__setattr__("params", dict(kwargs))
+        # lock the set of keys
+        super().__setattr__("_frozen_keys", frozenset(self.params.keys()))
+
+    # ========== iteration / flattening ==========
+    def iterator(self) -> Iterator[Tuple[str, Scalar]]:
+        for key, val in self.params.items():
+            if isinstance(val, (list, tuple)):
+                for i, v in enumerate(val, start=1):
+                    yield f"{key}{i}", v  # keep as tensor/Parameter/float intact
             else:
-                yield name, value
+                yield key, val
 
-    def __len__(self):
-        # len function returns the number of total parameters we have when iterating, not the total number of fields
+    def __len__(self) -> int:
         return sum(1 for _ in self.iterator())
 
-    def _get_params(self):
-        return {
-            "L": self.L,
-            "RL": self.RL,
-            "C": self.C,
-            "RC": self.RC,
-            "Rdson": self.Rdson,
-            "Rloads": self.Rloads,
-            "Vin": self.Vin,
-            "VF": self.VF,
-        }
+    # ========== attribute <-> dict sync (keys frozen) ==========
+    def __getattr__(self, name: str) -> Any:
+        if name in self.params:
+            return self.params[name]
+        raise AttributeError(f"{type(self).__name__} has no attribute '{name}'")
 
-    def get_from_iterator_name(self, param_name: str) -> float:
-        names = self.get_all_names()
-        # check if the param_name is present in the names
-        if param_name in names:
-            return self.get_all_values()[names.index(param_name)]
-        raise ValueError(f"Parameter '{param_name}' not found.")
+    def __setattr__(self, name: str, value: Any) -> None:
+        # allow normal setting for reserved/internal attrs
+        if name in self._reserved_attrs or name.startswith("__") or name == "_frozen_keys":
+            super().__setattr__(name, value)
+            return
+        # only allow updates to existing parameter keys
+        if name in self.params:
+            self.params[name] = value
+            return
+        # forbid adding new parameter keys as attributes
+        raise AttributeError(
+            f"Cannot add new parameter '{name}' after initialization; keys are frozen. "
+            f"Existing keys: {sorted(self.params.keys())}"
+        )
+
+    def __delattr__(self, name: str) -> None:
+        # never allow deleting parameter keys
+        if name in self.params:
+            raise AttributeError("Deleting parameters is not allowed; keys are frozen.")
+        # allow deleting non-param attrs (rarely needed)
+        super().__delattr__(name)
+
+    def __dir__(self) -> List[str]:
+        return sorted(set(list(self.__dict__.keys()) + list(self.params.keys()) + list(type(self).__dict__.keys())))
+
+    # ========== mapping convenience (keys frozen) ==========
+    def __getitem__(self, key: str) -> Value:
+        return self.params[key]
+
+    def __setitem__(self, key: str, value: Value) -> None:
+        if key not in self.params:
+            raise KeyError(
+                f"Cannot add new parameter '{key}' after initialization; keys are frozen. "
+                f"Existing keys: {sorted(self.params.keys())}"
+            )
+        self.params[key] = value
+
+    def pop(self, key: str, *default) -> Value:
+        # no deletions
+        raise TypeError("pop() is disabled; parameter keys are frozen.")
+
+    # ========== helpers ==========
+    def expand(self) -> Dict[str, float]:
+        return {k: v for k, v in self.iterator()}
 
     def get_all_values(self) -> List[float]:
-        return [value for _, value in self.iterator()]
+        return [v for _, v in self.iterator()]
 
-    @classmethod
-    def get_all_names(cls) -> List[str]:
-        return [name for name, _ in cls.build_empty().iterator()]
+    def get_all_names(self) -> List[str]:
+        return [k for k, _ in self.iterator()]
 
-    @classmethod
-    def build_empty(cls) -> "Parameters":
-        return cls(
-            L=0.0,
-            RL=0.0,
-            C=0.0,
-            RC=0.0,
-            Rdson=0.0,
-            Rloads=[0.0, 0.0, 0.0],
-            Vin=0.0,
-            VF=0.0,
-        )
+    def get_from_iterator_name(self, name: str) -> float:
+        flat = self.expand()
+        if name not in flat:
+            raise ValueError(f"Parameter '{name}' not found.")
+        return flat[name]
 
-    @classmethod
-    def build_from_all_names_iterator(
-        cls, iterator: Union[Mapping[str, float], Iterable[Tuple[str, float]]]
-    ) -> "Parameters":
-        """
-        Build a Parameters instance from an iterator or dict
-        mapping 'L', 'RL', ..., 'Rload1', 'Rload2', ... to values.
-        """
-        if isinstance(iterator, Mapping):
-            items = list(iterator.items())
-        else:
-            items = list(iterator)
-
-        # Separate Rloads and scalar parameters
-        rloads = []
-        param_dict = {}
-        for name, value in items:
-            if name.startswith("Rload"):
-                rloads.append((int(name[5:]), value))  # store index + value
-            else:
-                param_dict[name] = value
-
-        # Sort Rloads by index so Rload1, Rload2, ... are in order
-        rloads_sorted = [v for _, v in sorted(rloads, key=lambda t: t[0])]
-
-        return cls(
-            L=param_dict["L"],
-            RL=param_dict["RL"],
-            C=param_dict["C"],
-            RC=param_dict["RC"],
-            Rdson=param_dict["Rdson"],
-            Rloads=rloads_sorted,
-            Vin=param_dict["Vin"],
-            VF=param_dict["VF"],
-        )
-
-    @classmethod
-    def build_from_field_iterator(cls, m: Union[Mapping[str, float], Iterable[Tuple[str, float]]]) -> "Parameters":
-        names = []
-        values = []
-        for name, value in m.items():
-            names.append(name)
-            values.append(value)
-        return cls(*values)
-
-    def save(self, path: Union[str, Path]):
-        """
-        Save Parameters instance to JSON file.
-        """
+    # ========== (de)serialization ==========
+    def save(self, path: Union[str, Path]) -> None:
+        file_suffix = self.DEFAULT_FILE_PATTERN[1:]  # ".params.json"
         path = Path(path)
-        file_pattern = DEFAULT_FILE_PATTERN
-
-        # if it doesn't end in .laplace.json add it. If it just finishes in .json make it .laplace.json
-        if not path.name.endswith(file_pattern):
-            if path.name.endswith(".json"):
-                path = path.with_name(path.stem + file_pattern[1:])
+        if not path.name.endswith(file_suffix):
+            if path.suffix == ".json":
+                path = path.with_name(path.stem + file_suffix)
             else:
-                path = path.with_suffix(file_pattern[1:])
-
-        data = dict(self._get_params())  # includes Rloads list
-        with path.open("w") as f:
-            json.dump(data, f, indent=2)
+                path = path.with_suffix(file_suffix)
+        data = self._to_jsonable(self.params)
+        path.write_text(json.dumps(data, indent=2))
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "Parameters":
-        """
-        Load Parameters instance from JSON file.
-        """
         path = Path(path)
-        
-        if not path.name.endswith(DEFAULT_FILE_PATTERN[1:]):
-            raise Warning(
-                f"Invalid file pattern: {path.name}. Expected pattern: {DEFAULT_FILE_PATTERN}"
-            )
-        
-        with path.open("r") as f:
-            data = json.load(f)
+        expected = cls.DEFAULT_FILE_PATTERN[1:]
+        if not path.name.endswith(expected):
+            raise Warning(f"Invalid file pattern: {path.name}. Expected pattern: {expected}")
+        data = json.loads(path.read_text())
+        return cls(**data)
 
-        return cls(
-            L=data["L"],
-            RL=data["RL"],
-            C=data["C"],
-            RC=data["RC"],
-            Rdson=data["Rdson"],
-            Rloads=data["Rloads"],
-            Vin=data["Vin"],
-            VF=data["VF"],
-        )
+    @staticmethod
+    def _to_jsonable(obj: Any) -> Any:
+        if isinstance(obj, (int, float, str)):
+            return obj
+        if isinstance(obj, (torch.Tensor, torch.nn.Parameter)):
+            # scalar tensor?
+            if obj.ndim == 0:
+                return float(obj.detach().cpu().item())
+            # non-scalar -> list
+            return obj.detach().cpu().tolist()
+        if isinstance(obj, (list, tuple)):
+            return [Parameters._to_jsonable(x) for x in obj]
+        if isinstance(obj, dict):
+            return {k: Parameters._to_jsonable(v) for k, v in obj.items()}
+        return obj
+
+    # ========== builders ==========
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Value]) -> "Parameters":
+        return cls(**dict(mapping))
+
+    @classmethod
+    def build_from_flat(
+        cls,
+        flat: Union[Mapping[str, Scalar], Iterable[Tuple[str, Scalar]]],
+        *,
+        list_key_policy: Optional[Mapping[str, str]] = None,
+    ) -> "Parameters":
+        import re
+        items = list(flat.items()) if isinstance(flat, Mapping) else list(flat)
+        scalars: Dict[str, Scalar] = {}
+        grouped: Dict[str, List[Tuple[int, Scalar]]] = {}
+        rx = re.compile(r"^(.*?)(\d+)$")
+        for name, value in items:
+            m = rx.match(name)
+            if m:
+                base, idx = m.group(1), int(m.group(2))
+                grouped.setdefault(base, []).append((idx, value))
+            else:
+                scalars[name] = value
+        params: Dict[str, Value] = dict(scalars)
+        list_key_policy = dict(list_key_policy or {})
+        for base, pairs in grouped.items():
+            pairs.sort(key=lambda t: t[0])
+            _, values = zip(*pairs)
+            container_key = list_key_policy.get(base, base)
+            params[container_key] = list(values)
+        return cls(**params)

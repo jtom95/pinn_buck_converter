@@ -124,7 +124,7 @@ def log_normal_prior(logparams: Parameters, mu0: Parameters, sigma0: Parameters)
     """Return −log p(log z) assuming independent log-normal priors."""
     total = 0.0
     nominal_logparams = make_log_param(mu0)
-    for name in Parameters._fields:
+    for name in logparams._frozen_keys:
         if name == "Rloads":
             # we have two lists of Rloads, so we need to iterate over them
             for i, rload in enumerate(logparams.Rloads):

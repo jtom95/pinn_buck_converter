@@ -96,9 +96,7 @@ class JacobianEstimator(JacobianEstimatorBase):
             # update the model so that the load resistance is one and fixed to the value of the t-th load
             model_params_T = model.get_estimates()
             # can't directly set Parameter attributes because they are NamedTuples
-            model_params_T = model_params_T._replace(
-                Rloads=[model_params_T.Rloads[s]]  # fix to the s-th load
-            )
+            model_params_T.Rloads = [model_params_T.Rloads[s]]  # fix to the s-th load
             model_class = model.__class__
             model_clone = model_class(param_init=model_params_T)
 
