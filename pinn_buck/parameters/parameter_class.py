@@ -1,9 +1,10 @@
-from typing import List, NamedTuple, Mapping, Union, Iterable, Tuple
+from typing import List, NamedTuple, Mapping, Union, Iterable, Tuple, Final
 import pandas as pd
 import numpy as np
 from pathlib import Path
 import json
 
+DEFAULT_FILE_PATTERN: Final = "*.params.json"
 
 class Parameters(NamedTuple):
     L: float
@@ -104,7 +105,7 @@ class Parameters(NamedTuple):
             Vin=param_dict["Vin"],
             VF=param_dict["VF"],
         )
-        
+
     @classmethod
     def build_from_field_iterator(cls, m: Union[Mapping[str, float], Iterable[Tuple[str, float]]]) -> "Parameters":
         names = []
@@ -119,6 +120,15 @@ class Parameters(NamedTuple):
         Save Parameters instance to JSON file.
         """
         path = Path(path)
+        file_pattern = DEFAULT_FILE_PATTERN
+
+        # if it doesn't end in .laplace.json add it. If it just finishes in .json make it .laplace.json
+        if not path.name.endswith(file_pattern):
+            if path.name.endswith(".json"):
+                path = path.with_name(path.stem + file_pattern[1:])
+            else:
+                path = path.with_suffix(file_pattern[1:])
+
         data = dict(self._get_params())  # includes Rloads list
         with path.open("w") as f:
             json.dump(data, f, indent=2)
@@ -129,6 +139,12 @@ class Parameters(NamedTuple):
         Load Parameters instance from JSON file.
         """
         path = Path(path)
+        
+        if not path.name.endswith(DEFAULT_FILE_PATTERN[1:]):
+            raise Warning(
+                f"Invalid file pattern: {path.name}. Expected pattern: {DEFAULT_FILE_PATTERN}"
+            )
+        
         with path.open("r") as f:
             data = json.load(f)
 

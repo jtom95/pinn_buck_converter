@@ -256,6 +256,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         Load LaplacePosterior objects from a directory.
         """
         raise_error_if_label_not_found = False if (labels is None and group_number_dict is None) else True
+        # find all contents of directory
         lfits = LaplaceDictionaryLoader(group_number_dict).load_lfits_from_dir(directory, labels=labels, raise_error_if_label_not_found=raise_error_if_label_not_found)
         return cls(lfits)
 
@@ -912,4 +913,4 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         fig.suptitle("Laplace Posteriors", fontsize=16)
         fig.tight_layout()
         fig.subplots_adjust(top=0.92)
-        return fig, axes
+        return fig, axes2d
