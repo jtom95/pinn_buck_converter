@@ -373,7 +373,7 @@ for idx, group_number in enumerate(l_dict.keys()):
     trained_runs[group_name] = trainer.history
 
     trainer.history.get_best_parameters().save(out_dir / f"best_params_{group_name}.json")
-    trainer.history.save_to_csv(out_dir / f"history_{group_name}.csv")
+    trainer.history.save(out_dir / f"history_{group_name}")
     
     print("Final VIF:", 1 / trainer.map_loss.weight_likelihood_loss)
     print("\n \n \n")

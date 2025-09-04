@@ -28,8 +28,7 @@ class ResultsComparerTwo:
     and silently skips labels with no matching CSV.
     """
     DEFAULT_MEASUREMENT_GROUP = MeasurementGroupArchive.SHUAI_ORIGINAL
-
-    FILE_PATTERN = "*.csv"
+    DEFAULT_FILE_PATTERN = TrainingHistory.DEFAULT_FILE_PATTERN
 
     def __init__(
         self,
@@ -54,7 +53,7 @@ class ResultsComparerTwo:
         return out
 
     def _seen_stems(self, outdir: Path) -> list[str]:
-        return [p.stem for p in sorted(outdir.glob(self.FILE_PATTERN))]
+        return [p.stem for p in sorted(outdir.glob(self.DEFAULT_FILE_PATTERN))]
 
     def _load_specific_labels(
         self,
@@ -63,7 +62,7 @@ class ResultsComparerTwo:
         raise_error_if_label_not_found: bool = True,
     ) -> RunsDict:
         out: RunsDict = {}
-        all_files = list(sorted(outdir.glob(self.FILE_PATTERN)))
+        all_files = list(sorted(outdir.glob(self.DEFAULT_FILE_PATTERN)))
         stems = [f.stem for f in all_files]
 
         def candidates_for(label: str) -> list[Path]:
@@ -101,8 +100,8 @@ class ResultsComparerTwo:
                 raise FileExistsError(
                     f"Ambiguous files for label '{label}': {[c.name for c in cands]}"
                 )
-            csv_file = cands[0]
-            tr = TrainingHistory.from_csv(csv_file)
+            hist0 = cands[0]
+            tr = TrainingHistory.load(hist0)
             if self.drop_columns:
                 tr = tr.drop_columns(list(self.drop_columns))
             out[label] = tr

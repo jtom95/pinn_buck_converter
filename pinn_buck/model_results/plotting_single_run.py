@@ -5,75 +5,97 @@ import matplotlib.pyplot as plt
 from ..parameters.parameter_class import Parameters
 from .history import TrainingHistory
 import numpy as np
-from matplotlib.transforms import blended_transform_factory as blend
+from matplotlib.transforms import blended_transform_factory as _blend
 
 
 def plot_tracked_parameters(
-    history: TrainingHistory,
+    history: "TrainingHistory",
     figsize=(12, 8),
     skip_loss: bool = False,
-    target: Parameters = None,
+    target: "Parameters" = None,
     logloss: bool = True,
     label: str = None,
     color: str = "black",
-    ax: Iterable[plt.Axes] = None,
+    ax: "Iterable[plt.Axes]" = None,
     optimizer_alpha: float = 0.06,  # shading strength
     optimizer_line_alpha: float = 0.4,
-    skip_elements: Tuple[str, ...] = ("callbacks",),
+    skip_elements: "Tuple[str, ...]" = ("callbacks",),
     **kwargs,
 ):
     """
-    Plot tracked physical parameters and (optionally) loss over entries.
-    Ignores any 'epoch' resets; x-axis is simply the entry index.
-    If 'optimizer' exists, shades segments and annotates optimizer names.
+    Plot tracked physical parameters (flattened) and optionally loss.
+    X-axis = entry index (0..N-1), independent of epochs.
+    If 'optimizer' exists in meta, shade segments and annotate optimizer names.
     """
-    # Split the history into: extra columns (loss/optimizer/lr/epoch/etc.) and iterator (per-parameter)
-    drop_condition = lambda c: (c in Parameters._fields) or ("Rload" in c)
-    df_extra = history.df.drop(columns=[c for c in history.df.columns if drop_condition(c)])
-    df_iter = history.df_from_iterator()  # per-parameter columns in display names
 
-    # Decide which extra columns to plot
-    has_opt = "optimizer" in df_extra.columns
-    has_lr = "learning_rate" in df_extra.columns
+    # ---- helpers ----
+    def _to_scalar(x):
+        try:
+            import torch
 
-    core_cols = list(df_extra.columns)
-    for c in ("optimizer", "epoch") + skip_elements:  # we ignore epoch entirely
-        if c in core_cols:
-            core_cols.remove(c)
-    if skip_loss and "loss" in core_cols:
-        core_cols.remove("loss")
+            if isinstance(x, torch.Tensor):
+                return (
+                    float(x.detach().cpu().item())
+                    if x.ndim == 0
+                    else float(x.detach().cpu().reshape(-1)[0])
+                )
+        except Exception:
+            pass
+        try:
+            return float(x)
+        except Exception:
+            return x
 
-    # Join with iterator columns (keeps only rows common to both)
-    df = df_extra[core_cols].join(df_iter, how="inner")
+    # ---- decide columns to plot ----
+    meta_cols = set(history.meta_cols)
+    param_cols = list(history.param_cols)  
 
-    # x-axis = simple entry index (0..N-1)
+    has_opt = "optimizer" in meta_cols and "optimizer" in history.df.columns
+    has_lr = "learning_rate" in meta_cols and "learning_rate" in history.df.columns
+
+    # meta series we might plot alongside parameters
+    core_meta = [
+        c for c in history.meta_cols if c not in ("optimizer", "epoch") and c not in skip_elements
+    ]
+    if skip_loss and "loss" in core_meta:
+        core_meta.remove("loss")
+
+    # assemble plot order: (keep meta first so 'loss' shows up early), then params
+    plot_cols = core_meta + param_cols
+    if len(plot_cols) == 0:
+        raise ValueError("Nothing to plot: no parameter or (selected) meta columns found.")
+
+    # ---- DataFrame aligned to selected columns ----
+    df = history.df[plot_cols].copy()
     N = len(df)
     x = np.arange(N, dtype=float)
 
-    # Get optimizer labels aligned to df rows (if present)
-    if has_opt:
-        opt = history.df.loc[df.index, "optimizer"].to_numpy()
-    else:
-        opt = None
+    # optimizer labels aligned to df rows (if present)
+    opt = history.df["optimizer"].to_numpy() if has_opt else None
 
-    # Build axes grid
-    n = len(df.columns)
+    # ---- figure/axes grid ----
+    n = len(plot_cols)
     ncols = 4
     nrows = (n + ncols - 1) // ncols
     if ax is None:
-        fig, ax = plt.subplots(nrows, ncols, figsize=figsize, constrained_layout=True, sharex=True)
-        axes = np.array(ax).reshape(nrows, ncols).flatten()
+        fig, ax_grid = plt.subplots(
+            nrows, ncols, figsize=figsize, constrained_layout=True, sharex=True
+        )
+        axes = np.array(ax_grid).reshape(nrows, ncols).flatten()
     else:
-        ax = np.asarray(ax)
-        if ax.shape != (nrows, ncols):
-            raise ValueError(f"Expected axes shape {(nrows, ncols)}, got {ax.shape}")
-        fig = ax[0, 0].figure
-        axes = ax.flatten()
+        ax_arr = np.asarray(ax)
+        if ax_arr.shape != (nrows, ncols):
+            raise ValueError(f"Expected axes shape {(nrows, ncols)}, got {ax_arr.shape}")
+        fig = ax_arr[0, 0].figure
+        axes = ax_arr.flatten()
 
-    # Targets
-    target_dict = {name: value for name, value in target.iterator()} if target else {}
+    # ---- targets dict (flattened names) ----
+    target_dict = {}
+    if target is not None:
+        for name, val in target.iterator():
+            target_dict[name] = _to_scalar(val)
 
-    # Helper to shade optimizer segments on a given axis
+    # ---- optimizer band drawer ----
     def draw_optimizer_bands(ax_):
         if opt is None or len(opt) == 0:
             return
@@ -82,14 +104,14 @@ def plot_tracked_parameters(
         names = [opt[s] for s in starts]
 
         palette = plt.cm.tab20.colors
-        trans = blend(ax_.transData, ax_.transAxes)  # x in data; y in axes
+        trans = _blend(ax_.transData, ax_.transAxes)  # x in data; y in axes
 
         for k, (s, e) in enumerate(zip(starts, ends)):
-            x0, x1 = float(s), float(e - 1 if e > s else s)
+            x0 = float(s)
+            x1 = float((e - 1) if e > s else s)
             if x1 == x0:
-                x1 = x0 + 1.0  # minimal width for single-point segments
+                x1 = x0 + 1.0  # minimum width
 
-            # band under the curves
             ax_.axvspan(
                 x0,
                 x1,
@@ -99,7 +121,6 @@ def plot_tracked_parameters(
                 zorder=0,
             )
 
-            # vertical separator at the start (except first)
             if s != 0:
                 ax_.axvline(
                     x0,
@@ -110,12 +131,11 @@ def plot_tracked_parameters(
                     zorder=1,
                 )
 
-            # label inside the band (near top)
             xc = 0.5 * (x0 + x1)
             ax_.text(
                 xc,
                 0.92,
-                names[k],
+                str(names[k]),
                 rotation=90,
                 va="top",
                 ha="center",
@@ -126,8 +146,8 @@ def plot_tracked_parameters(
                 zorder=2,
             )
 
-    # Plot each series
-    for i, col in enumerate(df.columns):
+    # ---- plot each column ----
+    for i, col in enumerate(plot_cols):
         ax_i = axes[i]
         y = df[col].to_numpy()
 
@@ -137,7 +157,8 @@ def plot_tracked_parameters(
                 ax_i.set_yscale("log")
                 ax_i.set_ylabel("Loss (log scale)")
         else:
-            if target and col in target_dict:
+            # draw horizontal target if provided
+            if col in target_dict:
                 ax_i.axhline(target_dict[col], color="black", lw=2.0, alpha=0.7, label="target")
             ax_i.plot(x, y, color=color, label=label or "estimate", **kwargs)
 
@@ -148,29 +169,24 @@ def plot_tracked_parameters(
 
         draw_optimizer_bands(ax_i)
 
-    # Learning rate panel, if there’s room
-    last_used = len(df.columns)
+    # ---- optional learning-rate panel (if spare axes exist and not already plotted) ----
+    last_used = len(plot_cols)
     if has_lr and last_used < len(axes):
         ax_lr = axes[last_used]
-        ax_lr.plot(
-            x,
-            history.df.loc[df.index, "learning_rate"].to_numpy(),
-            color=color,
-            label=label or "lr",
-        )
-        ax_lr.set_title("Learning Rate")
+        ax_lr.plot(x, history.df["learning_rate"].to_numpy(), color=color, label=label or "lr")
+        ax_lr.set_title("learning_rate")
         ax_lr.set_xlabel("Entry")
         ax_lr.grid(True, alpha=0.25)
         ax_lr.legend(loc="best")
         draw_optimizer_bands(ax_lr)
         last_used += 1
 
-    # Hide any empty subplots
+    # hide empty subplots
     for j in range(last_used, len(axes)):
         axes[j].axis("off")
 
     fig.suptitle("Tracked Parameters over Training", fontsize=16)
-    return fig, ax
+    return fig, ax if ax is not None else ax_grid
 
 
 # plot the percentage error of the parameters
@@ -277,7 +293,7 @@ def plot_final_percentage_error_multi(
     for run_label, tr in runs.items():
         best_parameters = tr.get_best_parameters() if select_lowest_loss else tr.get_latest_parameters()  # get best parameters or last row
         for name, value in best_parameters.iterator():
-            if name in tr.df_from_iterator() and name not in skip_params:
+            if name in tr.df and name not in skip_params:
                 target_value = target.get_from_iterator_name(name)
                 err = abs(value / target_value - 1.0) * 100.0
                 rows.setdefault(name, {})[run_label] = err
