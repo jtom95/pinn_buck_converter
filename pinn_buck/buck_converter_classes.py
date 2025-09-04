@@ -1,7 +1,8 @@
 from .model.system_dynamics import SystemDynamics
-from .model.system_state_class import State
+from .model.system_state_class import States
 from .parameters.parameter_class import Parameters, Scalar, Seq
-from typing import List
+from typing import List, Dict
+import torch
 
 class BuckConverterParams(Parameters):
     L: Scalar
@@ -51,15 +52,15 @@ class BuckConverterDynamics(SystemDynamics):
     def _dv(i_k, v_k, S, p: BuckConverterParams, rload, di):
         return (p.C * p.RC * rload * di + rload * i_k - v_k) / (p.C * (p.RC + rload))
 
-    def dynamics(self, current_state: State, params: BuckConverterParams, **kwargs) -> State:
-        i = current_state["i"]
-        v = current_state["v"]
-        D = current_state["D"]
-        dt = current_state.dt
+    def dynamics(self, current_states: States, params: BuckConverterParams, controls: Dict[str, torch.Tensor]) -> States:
+        i = current_states["i"]
+        v = current_states["v"]
+        D = controls["D"]
 
         di = -((D * params.Rdson + params.RL) * i + v - D * params.Vin + (1 - D) * params.VF) / params.L
         dv = (params.C * params.RC * params.Rloads * di + params.Rloads * i - v) / (
             params.C * (params.RC + params.Rloads)
         )
 
-        return State({"i": di, "v": dv}, dt=dt)
+        # return the differentials of the state
+        return States({"i": di, "v": dv})
