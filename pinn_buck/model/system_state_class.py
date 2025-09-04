@@ -40,7 +40,7 @@ class States(dict):
         return States(out)
     
     def pop_key(self, name: str) -> "States":
-        """Return a NEW State without `name` (if present)."""
+        """Return a NEW States without `name` (if present)."""
         out = {k: v for k, v in self.items() if k != name}
         return States(out)
 

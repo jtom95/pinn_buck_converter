@@ -55,72 +55,81 @@ class BaseBuckEstimator(nn.Module, ABC):
         self.system_dynamics: SystemDynamics = self._define_system_dynamics()
 
     def _initialize_log_parameters(self, param_init: Parameters):
+        """
+        Create learnable *log-space* parameters from an arbitrary Parameters instance.
+        - Scalars -> nn.Parameter
+        - Python list/tuple -> nn.ParameterList (one Parameter per element)
+        - torch.Tensor with ndim>=1 -> nn.ParameterList (split along dim 0)
+        """
         log_params = make_log_param(param_init)
 
-        self.log_L    = nn.Parameter(torch.as_tensor(log_params.L,    dtype=torch.float32))
-        self.log_RL   = nn.Parameter(torch.as_tensor(log_params.RL,   dtype=torch.float32))
-        self.log_C    = nn.Parameter(torch.as_tensor(log_params.C,    dtype=torch.float32))
-        self.log_RC   = nn.Parameter(torch.as_tensor(log_params.RC,   dtype=torch.float32))
-        self.log_Rdson= nn.Parameter(torch.as_tensor(log_params.Rdson,dtype=torch.float32))
-        self.log_Vin  = nn.Parameter(torch.as_tensor(log_params.Vin,  dtype=torch.float32))
-        self.log_VF   = nn.Parameter(torch.as_tensor(log_params.VF,   dtype=torch.float32))
+        # keep track of what we created so we can rebuild Parameters later
+        self._scalar_keys: list[str] = []
+        self._list_keys: list[str] = []
 
-        # lists
-        self.log_Rloads = nn.ParameterList(
-            [nn.Parameter(torch.as_tensor(r, dtype=torch.float32)) for r in log_params.Rloads]
-        )
+        for key, val in log_params.params.items():
+            # Case 1: Python list/tuple of scalars/tensors
+            if isinstance(val, (list, tuple)):
+                plist = nn.ParameterList(
+                    [nn.Parameter(torch.as_tensor(v, dtype=torch.float32)) for v in val]
+                )
+                setattr(self, f"log__{key}", plist)
+                self._list_keys.append(key)
+                continue
 
-    # ----------------------------- helpers -----------------------------
+            # Case 2: Tensor sequence (rank >= 1) -> split along the first dimension
+            if isinstance(val, torch.Tensor) and val.ndim >= 1:
+                # Do NOT call .unbind() on a leaf with grad; wrap into Parameters first
+                elems = [t for t in val]  # iterates dim-0 slices
+                plist = nn.ParameterList(
+                    [nn.Parameter(torch.as_tensor(e, dtype=torch.float32)) for e in elems]
+                )
+                setattr(self, f"log__{key}", plist)
+                self._list_keys.append(key)
+                continue
 
-    def _physical(self) -> Parameters:
-        """Return current parameters in physical units (inverse scaling)."""
-        return reverse_log_param(self.logparams)
+            # Case 3: Scalar (float/int/0-D tensor/nn.Parameter)
+            p = nn.Parameter(torch.as_tensor(val, dtype=torch.float32))
+            setattr(self, f"log__{key}", p)
+            self._scalar_keys.append(key)
+
 
     @property
     def logparams(self) -> Parameters:
-        """Return current log‑space parameters."""
-        return Parameters(
-            L=self.log_L,
-            RL=self.log_RL,
-            C=self.log_C,
-            RC=self.log_RC,
-            Rdson=self.log_Rdson,
-            Rloads=[rload for rload in self.log_Rloads],
-            Vin=self.log_Vin,
-            VF=self.log_VF,
-        )
+        """
+        Return a Parameters holding the *current* log-space values straight from the module.
+        (Preserves tensors/nn.Parameters; no casting to float.)
+        """
+        data = {}
+        for k in self._scalar_keys:
+            data[k] = getattr(self, f"log__{k}")
+        for k in self._list_keys:
+            plist: nn.ParameterList = getattr(self, f"log__{k}")
+            data[k] = [p for p in plist]
+        return Parameters(**data)
 
     def get_estimates(self) -> Parameters:
-        """Return current parameters in physical units."""
-        params = self._physical()
-        return Parameters(
-            L=params.L,
-            RL=params.RL,
-            C=params.C,
-            RC=params.RC,
-            Rdson=params.Rdson,
-            Rloads=[rload for rload in params.Rloads],
-            Vin=params.Vin,
-            VF=params.VF,
-        )
+        """Return current parameters in physical units (and inverse scaling)."""
+        return reverse_log_param(self.logparams)
 
     def _logparam_name_map(self) -> list[tuple[str, str]]:
         """
-        Returns ordered pairs  (display, stored)
-        e.g. ("L", "log_L"), ("Rload1", "log_Rloads.0"), ...
+        Map flat display names (e.g., 'Rloads1') to module attribute paths:
+        ('L', 'log__L'), ('Rloads1', 'log__Rloads.0'), ...
+        Works for any list/scalar keys.
         """
-        mapping = []
+        mapping: list[tuple[str, str]] = []
         for disp, _ in self.logparams.iterator():
-            if disp.startswith("Rload"):
-                # find numeric character at the END of the string
-                match = re.search(r"\d+$", disp)
-                if match:
-                    idx = int(match.group(0)) - 1
-                stored = f"log_Rloads.{idx}"
+            m = re.match(r"^(.*?)(\d+)$", disp)
+            if m:
+                base, idx = m.group(1), int(m.group(2)) - 1
+                mapping.append((disp, f"log__{base}.{idx}"))
             else:
-                stored = f"log_{disp}"
-            mapping.append((disp, stored))
+                mapping.append((disp, f"log__{disp}"))
         return mapping
+    # def _physical(self) -> Parameters:
+    #     """Return current parameters in physical units (inverse scaling)."""
+    #     return reverse_log_param(self.logparams)
 
     def _rk4_step(
         self, 
@@ -194,7 +203,7 @@ class BuckParamEstimator(BaseBuckEstimator):
         Returns:
         -------
         Tuple[torch.Tensor, torch.Tensor]
-        pred: Forward prediction of the buck converter state at time n+1. Shape (B, T, 2)
+        pred: Forward prediction of the buck converter states at time n+1. Shape (B, T, 2)
         """
 
         i, v = X[..., 0], X[..., 1]
@@ -204,7 +213,7 @@ class BuckParamEstimator(BaseBuckEstimator):
         controls = {"D": D[:-1]}
         time_steps = dt[:-1]
         
-        params = self._physical().expand_torch_sequences()
+        params = self.get_estimates().expand_torch_sequences()
 
         # Forward and backward predictions (vectorized)
         out_states = self._rk4_step(
@@ -249,14 +258,14 @@ class BuckParamEstimatorFwdBck(BaseBuckEstimator):
         torch.tensor (2, B, T, 2)
 
         along the first axis of the tensor:
-        fwd_pred: Forward prediction of the buck converter state at time n+1. Shape (B, T, 2)
-        bck_pred: Backward prediction of the buck converter state at time n-1. Shape (B, T, 2)
+        fwd_pred: Forward prediction of the buck converter states at time n+1. Shape (B, T, 2)
+        bck_pred: Backward prediction of the buck converter states at time n-1. Shape (B, T, 2)
         """
 
         i, v = X[..., 0], X[..., 1]
         D, dt = X[..., 2], X[..., 3]
 
-        p = self._physical()
+        p = self.get_estimates().expand_torch_sequences()
 
         # Forward and backward predictions (vectorized)
         fwd_pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)

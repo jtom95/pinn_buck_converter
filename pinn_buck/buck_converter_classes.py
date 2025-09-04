@@ -40,7 +40,7 @@ class BuckConverterParams(Parameters):
 class BuckConverterDynamics(SystemDynamics):
     """
     Dynamics for a buck converter.
-    State keys: 'i', 'v', 'D', ['dt' (default)]
+    States keys: 'i', 'v', 'D', ['dt' (default)]
     Params:
     """
 

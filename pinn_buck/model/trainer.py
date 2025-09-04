@@ -98,13 +98,13 @@ class Trainer:
         # Collect gradients for scalar parameters
         scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
         grads = [
-            getattr(self.model, f"log_{name}").grad.view(1)
+            getattr(self.model, f"log__{name}").grad.view(1)
             for name in scalar_param_names
-            if getattr(self.model, f"log_{name}").grad is not None
+            if getattr(self.model, f"log__{name}").grad is not None
         ]
 
         # Add gradients for Rloads
-        for rload_param in self.model.log_Rloads:
+        for rload_param in self.model.log__Rloads:
             if rload_param.grad is not None:
                 grads.append(rload_param.grad.view(1))
 

@@ -1,11 +1,11 @@
 {
   "version": 1,
   "meta_cols": [
-    "optimizer",
     "loss",
     "callbacks",
     "learning_rate",
-    "epoch"
+    "epoch",
+    "optimizer"
   ],
   "param_cols": [
     "L",
@@ -13,11 +13,11 @@
     "C",
     "RC",
     "Rdson",
+    "Vin",
+    "VF",
     "Rloads1",
     "Rloads2",
-    "Rloads3",
-    "Vin",
-    "VF"
+    "Rloads3"
   ],
   "dtypes": {
     "loss": "float64",
@@ -30,10 +30,10 @@
     "C": "float64",
     "RC": "float64",
     "Rdson": "float64",
+    "Vin": "float64",
+    "VF": "float64",
     "Rloads1": "float64",
     "Rloads2": "float64",
-    "Rloads3": "float64",
-    "Vin": "float64",
-    "VF": "float64"
+    "Rloads3": "float64"
   }
 }

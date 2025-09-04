@@ -48,7 +48,7 @@ class JacobianEstimator(JacobianEstimatorBase):
         dtype: torch.dtype = torch.float32,
         rng: Optional[torch.Generator] = None,
     ) -> torch.Tensor:
-        """Estimate the Jacobian of the RK4 state map.
+        """Estimate the Jacobian of the RK4 states map.
 
         Parameters
         ----------
@@ -190,7 +190,7 @@ class FwdBckJacobianEstimator(JacobianEstimatorBase):
         dtype: torch.dtype = torch.float32,
         rng: Optional[torch.Generator] = None,
     ) -> torch.Tensor:
-        """Estimate the Jacobian of the RK4 state map.
+        """Estimate the Jacobian of the RK4 states map.
 
         Parameters
         ----------

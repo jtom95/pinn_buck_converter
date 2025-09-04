@@ -14,5 +14,5 @@ class SystemDynamics(ABC):
 
     @abstractmethod
     def dynamics(self, start_states: States, params: Parameters, controls: Dict[str, torch.Tensor] = None, **kwargs) -> States:
-        """Return derivatives for the **evolving** state keys"""
+        """Return derivatives for the **evolving** states keys"""
         ...
