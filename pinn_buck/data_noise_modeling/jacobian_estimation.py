@@ -240,10 +240,8 @@ class FwdBckJacobianEstimator(JacobianEstimatorBase):
             Jsum = torch.zeros(2, 4, dtype=dtype, device=X.device)
             # update the model so that the load resistance is one and fixed to the value of the t-th load
             model_params_T = model.get_estimates()
+            model_params_T.Rloads = [model_params_T.Rloads[s]]  # fix to the s-th load
             # can't directly set Parameter attributes because they are NamedTuples
-            model_params_T = model_params_T._replace(
-                Rloads=[model_params_T.Rloads[s]]  # fix to the s-th load
-            )
             model_class = model.__class__
             model_clone = model_class(param_init=model_params_T)
 

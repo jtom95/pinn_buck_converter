@@ -179,10 +179,10 @@ for name, matrices in zip(["ADC noise", "5 LSB noise", "10 LSB noise"], covarian
     print("-" * 40)
 
 l_dict = {key: dict(
-    # fwd = chol(torch.eye(2)),
-    # bck = chol(torch.eye(2)),
-    fwd=chol(cov_matrix[0]),
-    bck=chol(cov_matrix[1])
+    fwd = chol(torch.eye(2)),
+    bck = chol(torch.eye(2)),
+    # fwd=chol(cov_matrix[0]),
+    # bck=chol(cov_matrix[1])
     )
         for key, cov_matrix in zip([1, 3, 4], covariance_matrices)
     }
@@ -199,7 +199,7 @@ from pinn_buck.model.map_loss import MAPLoss
 
 set_seed(123)
 device = "cpu"
-out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD&BCK"
+out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD&BCK_EYE"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 run_configs = TrainingConfigs(
@@ -290,7 +290,7 @@ for idx, group_number in enumerate(l_dict.keys()):
     trained_models[group_name] = trainer.optimized_model()
     trained_runs[group_name] = trainer.history
     trainer.history.get_best_parameters().save(out_dir / f"best_params_{group_name}.json")
-    trainer.history.save_to_csv(out_dir / f"history_{group_name}.csv")
+    trainer.history.save(out_dir / f"history_{group_name}")
     print("\n \n \n")
 
 

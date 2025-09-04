@@ -17,8 +17,10 @@ import torch
 import torch.nn as nn
 
 from ..parameters.parameter_class import Parameters
+from .system_state_class import State
 from ..io import Measurement
-
+from .system_dynamics import SystemDynamics
+from ..buck_converter_classes import BuckConverterDynamics
 
 import numpy as np
 import torch
@@ -26,7 +28,7 @@ from torch import nn
 
 
 from abc import ABC, abstractmethod
-from typing import Tuple, List, Optional, Any, Literal
+from typing import Tuple, List, Optional, Any, Literal, Mapping, Callable
 
 
 class BaseBuckEstimator(nn.Module, ABC):
@@ -50,10 +52,11 @@ class BaseBuckEstimator(nn.Module, ABC):
     ) -> None:
         super().__init__()
         self._initialize_log_parameters(param_init)
+        self.system_dynamics: SystemDynamics = self._define_system_dynamics()
 
     def _initialize_log_parameters(self, param_init: Parameters):
         log_params = make_log_param(param_init)
-        
+
         self.log_L    = nn.Parameter(torch.as_tensor(log_params.L,    dtype=torch.float32))
         self.log_RL   = nn.Parameter(torch.as_tensor(log_params.RL,   dtype=torch.float32))
         self.log_C    = nn.Parameter(torch.as_tensor(log_params.C,    dtype=torch.float32))
@@ -119,57 +122,32 @@ class BaseBuckEstimator(nn.Module, ABC):
             mapping.append((disp, stored))
         return mapping
 
-    # ---------------------- physics right‑hand sides -------------------
-    @staticmethod
-    def _di(i_k, v_k, S, p: Parameters):
-        return -((S * p.Rdson + p.RL) * i_k + v_k - S * p.Vin + (1 - S) * p.VF) / p.L
-
-    @staticmethod
-    def _dv(i_k, v_k, S, p: Parameters, rload, di):
-        return (p.C * p.RC * rload * di + rload * i_k - v_k) / (p.C * (p.RC + rload))
-
-    # ------------------------------- forward --------------------------
-    @staticmethod
-    def _rk4_step(i, v, D, dt, p: Parameters, sign=+1):
+    def _rk4_step(
+        self, 
+        s: State,
+        p: Parameters,
+        sign: int = +1,
+    ) -> State:
         """
         One Runge–Kutta-4 step of the buck-converter ODE.
 
         * `sign = +1` → forward step  (n → n+1)
         * `sign = -1` → backward step (n+1 → n)
-
-        Vectorized for tensors shape [..., 1].
-        i, v, D, dt have shape [B, T, 1], where B is the batch size and T is the number of transients.
-        p.Rloads is a list [Rload_0, Rload_1, ..., Rload_T-1]
-
-        Parameters:
-        - i: current at time n, shape [B, T, 1]
-        - v: voltage at time n, shape [B, T, 1]
-        - D: duty cycle at time n, shape [B, T, 1]
-        - dt: time step at time n, shape [B, T, 1]
-        - p: Parameters object containing the physical parameters of the buck converter
-        - sign: +1 for forward step, -1 for backward step
-        Returns:
-        - i_new: current at time n±1, shape [B, T, 1]
-        - v_new: voltage at time n±1, shape [B, T, 1]
         """
-        dh = dt * sign
 
-        # Build rload tensor of shape [1, 1] for broadcasting
-        rload = torch.stack(p.Rloads).view(1, -1)
+        dh = s.dt * float(sign)
 
-        def f(i_, v_):
-            di = -((D * p.Rdson + p.RL) * i_ + v_ - D * p.Vin + (1 - D) * p.VF) / p.L
-            dv = (p.C * p.RC * rload * di + rload * i_ - v_) / (p.C * (p.RC + rload))
-            return di, dv
+        k1 = self.system_dynamics.dynamics(s, p)
+        k2 = self.system_dynamics.dynamics(s + (0.5 * dh) * k1, p)
+        k3 = self.system_dynamics.dynamics(s + (0.5 * dh) * k2, p)
+        k4 = self.system_dynamics.dynamics(s + dh * k3, p)
 
-        k1_i, k1_v = f(i, v)
-        k2_i, k2_v = f(i + 0.5 * dh * k1_i, v + 0.5 * dh * k1_v)
-        k3_i, k3_v = f(i + 0.5 * dh * k2_i, v + 0.5 * dh * k2_v)
-        k4_i, k4_v = f(i + dh * k3_i, v + dh * k3_v)
+        return s + (dh / 6.0) * (k1 + 2*k2 + 2*k3 + k4)  
 
-        i_new = i + dh / 6.0 * (k1_i + 2 * k2_i + 2 * k3_i + k4_i)
-        v_new = v + dh / 6.0 * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
-        return i_new, v_new
+    @abstractmethod
+    def _define_system_dynamics(self) -> SystemDynamics:
+        """Define the system dynamics class."""
+        ...
 
     @abstractmethod
     def forward(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -184,7 +162,7 @@ class BaseBuckEstimator(nn.Module, ABC):
         Pred : torch.Tensor predictions.
         """
         ...
-        
+
     @abstractmethod
     def targets(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
         """
@@ -201,9 +179,63 @@ class BaseBuckEstimator(nn.Module, ABC):
         """
         ...
 
+    # ---------------------- physics right‑hand sides -------------------
+    # @staticmethod
+    # def _di(i_k, v_k, S, p: Parameters):
+    #     return -((S * p.Rdson + p.RL) * i_k + v_k - S * p.Vin + (1 - S) * p.VF) / p.L
+
+    # @staticmethod
+    # def _dv(i_k, v_k, S, p: Parameters, rload, di):
+    #     return (p.C * p.RC * rload * di + rload * i_k - v_k) / (p.C * (p.RC + rload))
+
+    # # ------------------------------- forward --------------------------
+    # @staticmethod
+    # def _rk4_step(i, v, D, dt, p: Parameters, sign=+1):
+    #     """
+    #     One Runge–Kutta-4 step of the buck-converter ODE.
+
+    #     * `sign = +1` → forward step  (n → n+1)
+    #     * `sign = -1` → backward step (n+1 → n)
+
+    #     Vectorized for tensors shape [..., 1].
+    #     i, v, D, dt have shape [B, T, 1], where B is the batch size and T is the number of transients.
+    #     p.Rloads is a list [Rload_0, Rload_1, ..., Rload_T-1]
+
+    #     Parameters:
+    #     - i: current at time n, shape [B, T, 1]
+    #     - v: voltage at time n, shape [B, T, 1]
+    #     - D: duty cycle at time n, shape [B, T, 1]
+    #     - dt: time step at time n, shape [B, T, 1]
+    #     - p: Parameters object containing the physical parameters of the buck converter
+    #     - sign: +1 for forward step, -1 for backward step
+    #     Returns:
+    #     - i_new: current at time n±1, shape [B, T, 1]
+    #     - v_new: voltage at time n±1, shape [B, T, 1]
+    #     """
+    #     dh = dt * sign
+
+    #     # Build rload tensor of shape [1, 1] for broadcasting
+    #     rload = torch.stack(p.Rloads).view(1, -1)
+
+    #     def f(i_, v_):
+    #         di = -((D * p.Rdson + p.RL) * i_ + v_ - D * p.Vin + (1 - D) * p.VF) / p.L
+    #         dv = (p.C * p.RC * rload * di + rload * i_ - v_) / (p.C * (p.RC + rload))
+    #         return di, dv
+
+    #     k1_i, k1_v = f(i, v)
+    #     k2_i, k2_v = f(i + 0.5 * dh * k1_i, v + 0.5 * dh * k1_v)
+    #     k3_i, k3_v = f(i + 0.5 * dh * k2_i, v + 0.5 * dh * k2_v)
+    #     k4_i, k4_v = f(i + dh * k3_i, v + dh * k3_v)
+
+    #     i_new = i + dh / 6.0 * (k1_i + 2 * k2_i + 2 * k3_i + k4_i)
+    #     v_new = v + dh / 6.0 * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
+    #     return i_new, v_new
+
 
 class BuckParamEstimator(BaseBuckEstimator):
     """Physics‑informed NN for parameter estimation in a buck converter."""
+    def _define_system_dynamics(self) -> SystemDynamics:
+        return BuckConverterDynamics()
 
     def forward(self, X: torch.Tensor):
         """
@@ -218,14 +250,14 @@ class BuckParamEstimator(BaseBuckEstimator):
         i, v = X[..., 0], X[..., 1]
         D, dt = X[..., 2], X[..., 3]
 
-        p = self._physical()
+        input_state = State({"i": i[:-1], "v": v[:-1], "D": D[:-1]}, dt=dt[:-1])
+        p = self._physical().expand_torch_sequences()
 
         # Forward and backward predictions (vectorized)
-        pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)
-        # note that in the bck_pred we use D[:-1] and dt[:-1], this is because we want to predict the
-        # voltages and currents at the time n, given their values after the dt time at time n+1.
+        out_state = self._rk4_step(input_state, p, sign=+1)
+        
         # transform the tuple into a tensor by stacking on the last dimension
-        pred = torch.stack(pred, dim=-1)  # shape (B, T, 2)
+        pred = torch.stack([out_state["i"], out_state["v"]], dim=-1)  # shape (B, T, 2)
         return pred
 
     def targets(self, X:torch.Tensor, **kwargs) -> torch.Tensor:
@@ -244,7 +276,7 @@ class BuckParamEstimator(BaseBuckEstimator):
             The target values for the given input tensor X.
         """
         return X[1:, :, :2].clone().detach()
-    
+
 
 class BuckParamEstimatorFwdBck(BaseBuckEstimator):
     """Physics‑informed NN for parameter estimation in a buck converter."""

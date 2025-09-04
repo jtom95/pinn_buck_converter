@@ -21,14 +21,20 @@ import json
 import re
 
 Scalar = Union[int, float, torch.Tensor, torch.nn.Parameter]
-Seq = Union[List[Scalar], Tuple[Scalar, ...]]
+Seq = Union[List[Scalar], Tuple[Scalar, ...], torch.Tensor]
 Value = Union[Scalar, Seq]
 
 
-def _is_sequence(x: Any) -> bool:
-    if isinstance(x, (str, bytes)):
-        return False
+
+def _is_seq_like(x: Any) -> bool:
+    # list/tuple of scalars/tensors
     return isinstance(x, (list, tuple))
+
+
+def _is_tensor_sequence(x: Any) -> bool:
+    # torch.Tensor with at least one dimension (rank>=1)
+    return isinstance(x, torch.Tensor) and x.ndim >= 1
+
 
 
 class Parameters:
@@ -51,10 +57,20 @@ class Parameters:
 
     # ========== iteration / flattening ==========
     def iterator(self) -> Iterator[Tuple[str, Scalar]]:
+        """
+        Yields (flat_name, value) pairs.
+        - list/tuple -> enumerate: name1, name2, ...
+        - tensor rank>=1 -> squeeze and enumerate to work with expanded tensors.
+        - scalars (int/float/rank-0 tensor) -> name, value
+        """
         for key, val in self.params.items():
-            if isinstance(val, (list, tuple)):
+            if _is_seq_like(val):
                 for i, v in enumerate(val, start=1):
-                    yield f"{key}{i}", v  # keep as tensor/Parameter/float intact
+                    yield f"{key}{i}", v
+            elif _is_tensor_sequence(val):
+                # slice along first dimension while preserving rest of dims
+                for i in range(val.squeeze().shape[0]):
+                    yield f"{key}{i+1}", val[i]
             else:
                 yield key, val
 
@@ -123,6 +139,55 @@ class Parameters:
         if name not in flat:
             raise ValueError(f"Parameter '{name}' not found.")
         return flat[name]
+
+    def expand_torch_sequences(self) -> "Parameters":
+        """
+        Convert all sequence-like params into broadcastable tensors with one
+        leading axis per sequence param, ordered by first appearance.
+
+        Example:
+            x1 = [a, b]         -> shape (1, 2)
+            x2 = [c, d, e]      -> shape (1, 1, 3)
+            Resulting arithmetic naturally broadcasts over (2, 3) grid.
+        """
+        seq_keys: List[str] = []
+        for k, v in self.params.items():
+            if _is_seq_like(v) or _is_tensor_sequence(v):
+                seq_keys.append(k)
+
+        n_seq = len(seq_keys)
+        if n_seq == 0:
+            return self  # nothing to expand
+
+        new_params: Dict[str, Value] = dict(self.params)  # copy shallow
+
+        for dim, key in enumerate(seq_keys):
+            values = self.params[key]
+
+            if _is_seq_like(values):
+                base = torch.stack([torch.as_tensor(x) for x in values])  # (L,)
+            elif _is_tensor_sequence(values):
+                base = values  # keep as tensor; preserve grad
+            else:
+                # scalar-like: nothing to do
+                continue
+
+            # base shape = (L, *rest)
+            if base.ndim == 0:
+                # degenerately scalar — treat like length-1 sequence
+                base = base.view(1)
+
+            L = base.shape[0]
+            rest = list(base.shape[1:])
+
+            # Build leading broadcast axes for all sequence params
+            lead = [1] + [1] * n_seq
+            lead[1 + dim] = L
+            reshaped = base.reshape(*lead, *rest)
+
+            new_params[key] = reshaped
+
+        return Parameters(**new_params)
 
     # ========== (de)serialization ==========
     def save(self, path: Union[str, Path]) -> None:
