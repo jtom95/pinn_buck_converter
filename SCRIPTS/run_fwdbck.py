@@ -32,12 +32,14 @@ from pinn_buck.io import LoaderH5
 # %%
 from scipy.stats import lognorm
 from pinn_buck.parameters.parameter_class import Parameters
+from pinn_buck.buck_converter_classes import ParameterArchive
 
 
+# Nominals and linear-space relative tolerances
 PRIOR_SIGMA = rel_tolerance_to_sigma(
-    ParameterConstants.REL_TOL, number_of_stds_in_relative_tolerance=1
+    ParameterArchive.REL_TOL, number_of_stds_in_relative_tolerance=1
 )
-
+NOMINAL_VALUES = ParameterArchive.NOMINAL
 
 # %%
 import torch
@@ -113,7 +115,7 @@ h5filename = "buck_converter_Shuai_processed.h5"
 io = LoaderH5(db_dir, h5filename)
 
 ### the jacobians are independent of the measurement so we can calculate them once
-model = BuckParamEstimatorFwdBck(param_init = ParameterConstants.NOMINAL).to(device)
+model = BuckParamEstimatorFwdBck(param_init = NOMINAL_VALUES).to(device)
 
 
 covariance_matrices = []
@@ -241,12 +243,12 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     # Train the model on the noisy measurement
     X = torch.tensor(io.M.data, device=device)
-    model = BuckParamEstimatorFwdBck(param_init = ParameterConstants.NOMINAL).to(device)
+    model = BuckParamEstimatorFwdBck(param_init=NOMINAL_VALUES).to(device)
 
     L_fwd, L_bck = l_dict[group_number]["fwd"], l_dict[group_number]["bck"]
 
     map_loss = MAPLoss(
-        initial_params=ParameterConstants.NOMINAL,
+        initial_params=NOMINAL_VALUES,
         initial_sigma=PRIOR_SIGMA,
         loss_likelihood_function=loss_whitened_fwbk,  # loss function for the forward-backward pass
         residual_function=basic_residual,

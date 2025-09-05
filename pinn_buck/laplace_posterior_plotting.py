@@ -17,7 +17,7 @@ from pinn_buck.constants import ParameterConstants
 import itertools
 
 from .laplace_posterior_fitting import LaplacePosterior
-from .parameters.parameter_class import Parameters
+from .parameters.parameter_class import Parameters, Units
 from .plot_aux import place_shared_legend, _apply_eng_label_only
 
 
@@ -84,7 +84,7 @@ class LaplaceDictionaryLoader:
 
     def __init__(
         self,
-        group_number_dict: Optional[Mapping[int, str]] = None,
+        group_number_dict: Optional[Mapping[int, str]] = DEFAULT_MEASUREMENT_GROUP,
         file_pattern: Optional[str] = None,
     ) -> None:
         self.group_number_dict: Dict[int, str] = dict(
@@ -245,6 +245,13 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
     ):
         self.lfits = lfits
 
+        # extract units: 
+        all_units = {}
+        for lfit in lfits.values():
+            for pname, unit in lfit.param_units.items():
+                all_units[pname] = unit
+        self.units = Units(**all_units)
+
     @classmethod
     def from_dir(
         cls, 
@@ -339,8 +346,8 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
     #     ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
         
     @classmethod
-    def _format_abs_axis_with_unit(cls, ax: plt.Axes, param_name: str) -> None:
-        unit = ParameterConstants.UNITS.get_from_iterator_name(param_name)
+    def _format_abs_axis_with_unit(cls, ax: plt.Axes, param_name: str, units: Units) -> None:
+        unit = units.get_from_iterator_name(param_name)
         if unit:
             _apply_eng_label_only(ax, unit)   # << use this path for label-with-unit
         else:
@@ -683,7 +690,8 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
 
             # axes labels and limits
             # absolute mode → attach the correct physical unit and engineering formatter
-            self._format_abs_axis_with_unit(ax, pname)
+            # assuming all groups have the same units for a given parameter
+            self._format_abs_axis_with_unit(ax, pname, units=self.units)
 
         # hide any unused axes
         for k in range(len(param_names), len(axes)):
@@ -793,7 +801,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
         if true_param is not None:
             ax.axvline(true_param, color="red", linestyle="--", label="TRUE", linewidth=1)
 
-        self._format_abs_axis_with_unit(ax, param_name)
+        self._format_abs_axis_with_unit(ax, param_name, self.units)
 
         # No per-axes legend; shared legend is placed by plot_laplace_posteriors
         if add_legend:
@@ -892,7 +900,7 @@ class LaplacePosteriorPlotter(LaplaceDictionaryLoader):
                     add_legend=add_legend,
                 )
 
-            self._format_abs_axis_with_unit(ax_i, name)
+            self._format_abs_axis_with_unit(ax_i, name, units=self.units)
 
         # hide extras
         for j in range(len(param_names), len(axes)):

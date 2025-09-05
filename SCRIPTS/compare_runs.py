@@ -25,7 +25,7 @@ PRIOR_SIGMA = rel_tolerance_to_sigma(
 # from pinn_buck.plot_aux import place_shared_legend
 
 directory_dict = {
-    "fwd_vif": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_VIF",
+    "fwd_vif": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD&BCK",
     "fwd": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD",
 }
 

@@ -83,9 +83,14 @@ class Trainer:
             #     # fallback: just str()
             #     parts.append(f"{name}={value}")
         print("Parameters: " + ", ".join(parts))
+        
+    @property
+    def parameters_class_type(self):
+        return type(self.model.param_init)
 
     def optimized_model(self, optimizer_type: Optional[str] = None) -> BaseBuckEstimator:
         best_parameters = self.history.get_best_parameters(optimizer_type)
+        best_parameters = self.parameters_class_type.build_from_flat(best_parameters.iterator())
         return self.model_class(param_init=best_parameters).to(self.device)
 
     def initialize_optimizer(self, optimizer_type: str, lr: float):
@@ -110,47 +115,40 @@ class Trainer:
             raise ValueError(f"Unknown optimizer type: {optimizer_type}")
 
     def log_results(self, it: int, loss: torch.Tensor, est: Parameters, opt: torch.optim.Optimizer):
+        # always get the latest physical estimates from the model
         est = self.model.get_estimates()
-        optimization_type = str(opt.__class__.__name__)
+        optimization_type = type(opt).__name__
 
-        # Collect gradients for scalar parameters
-        scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
+        # ---- collect gradients from ALL trainable log-space params ----
+        grads = []
+        for name, p in self.model.named_parameters():
+            # convention: all learnable params we care about are stored as log__*
+            if name.startswith("log__") and p.grad is not None:
+                grads.append(p.grad.reshape(-1))  # flatten
 
-        # Collect gradients for scalar parameters
-        scalar_param_names = ["L", "RL", "C", "RC", "Rdson", "Vin", "VF"]
-        grads = [
-            getattr(self.model, f"log__{name}").grad.view(1)
-            for name in scalar_param_names
-            if getattr(self.model, f"log__{name}").grad is not None
-        ]
-
-        # Add gradients for Rloads
-        for rload_param in self.model.log__Rloads:
-            if rload_param.grad is not None:
-                grads.append(rload_param.grad.view(1))
-
-        # Compute gradient norm
         if grads:
-            gradient_vector = torch.cat(grads)
-            gradient_norm = gradient_vector.norm().item()
+            gradient_vector = torch.cat(grads, dim=0)
+            gradient_norm = float(gradient_vector.norm().item())
         else:
-            gradient_norm = float("nan")  # no gradients found (shouldn't happen during training)
+            gradient_norm = float("nan")  # no grads found (e.g., before backward)
 
-        # Print parameter estimates
+        # ---- print a concise line + full parameter dump ----
         print(
-            f"[{optimization_type}] Iteration {it}, gradient_norm {gradient_norm:4e}, loss {loss:4e},",
+            f"[{optimization_type}] Iteration {it} | grad_norm={gradient_norm:.4e} | loss={loss.item():.4e}",
             end="\n",
         )
-        self.print_parameters(est)
+        self.print_parameters(est)  # uses your generic printer
 
-        est = self.model.get_estimates()
-        # update the histories with the last Adam iteration
+        # ---- record history ----
         self._history["optimizer"].append(optimization_type)
-        self._history["loss"].append(loss.item())
+        self._history["loss"].append(float(loss.item()))
         self._history["params"].append(est)
-        self._history["lr"].append(opt.param_groups[0]["lr"])
-        self._history["epochs"].append(it)
-        self._history["callbacks"].append(self.callback_count)
+        # use the first param group’s LR; customize if you use schedulers with multiple groups
+        lr = opt.param_groups[0].get("lr", None)
+        self._history["lr"].append(lr if lr is None else float(lr))
+        self._history["epochs"].append(int(it))
+        self._history["callbacks"].append(int(self.callback_count))
+
 
     def print_summary(self):
         print(

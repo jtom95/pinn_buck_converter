@@ -1,8 +1,9 @@
 from .model.system_dynamics import SystemDynamics
 from .model.system_state_class import States
-from .parameters.parameter_class import Parameters, Scalar, Seq
+from .parameters.parameter_class import Parameters, Units, Scalar, Seq
 from typing import List, Dict, Final
 import torch
+
 
 class BuckConverterParams(Parameters):
     L: Scalar
@@ -35,17 +36,18 @@ class BuckConverterParams(Parameters):
             Vin=Vin,
             VF=VF,
         )
-
-BUCK_PARAM_RESCALING: Final = BuckConverterParams(
-    L=1e4,
-    RL=1e1,
-    C=1e4,
-    RC=1e1,
-    Rdson=1e1,
-    Rloads=[1.0, 1.0, 1.0],
-    Vin=1e-1,
-    VF=1.0,
-)
+        
+        units = Units(
+            L="H",
+            RL="Ω",
+            C="F",
+            RC="Ω",
+            Rdson="Ω",
+            Rloads="Ω",
+            Vin="V",
+            VF="V",
+        )
+        self._assign_unit_class(units)
 
 
 class BuckConverterDynamics(SystemDynamics):
@@ -75,3 +77,51 @@ class BuckConverterDynamics(SystemDynamics):
 
         # return the differentials of the state
         return States({"i": di, "v": dv})
+
+
+class ParameterArchive:
+    """Physical and nominal parameter values used in the project."""
+
+    TRUE: Final = BuckConverterParams(
+        L=7.25e-4,
+        RL=0.314,
+        C=1.645e-4,
+        RC=0.201,
+        Rdson=0.221,
+        Rloads=[3.1, 10.2, 6.1],
+        Vin=48.0,
+        VF=1.0,
+    )
+
+    NOMINAL: Final = BuckConverterParams(
+        L=6.8e-4,
+        RL=0.4,
+        C=1.5e-4,
+        RC=0.25,
+        Rdson=0.25,
+        Rloads=[3.3, 10.0, 6.8],
+        Vin=46.0,
+        VF=1.1,
+    )
+
+    REL_TOL: Final = BuckConverterParams(
+        L=0.50,
+        RL=0.4,
+        C=0.50,
+        RC=0.50,
+        Rdson=0.5,
+        Rloads=[0.3, 0.3, 0.3],
+        Vin=0.3,
+        VF=0.3,
+    )
+
+    RESCALING: Final = BuckConverterParams(
+        L=1e4,
+        RL=1e1,
+        C=1e4,
+        RC=1e1,
+        Rdson=1e1,
+        Rloads=[1.0, 1.0, 1.0],
+        Vin=1e-1,
+        VF=1.0,
+    )

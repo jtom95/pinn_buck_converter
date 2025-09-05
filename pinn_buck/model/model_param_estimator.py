@@ -20,7 +20,7 @@ from ..parameters.parameter_class import Parameters
 from .system_state_class import States
 from ..io import Measurement
 from .system_dynamics import SystemDynamics
-from ..buck_converter_classes import BuckConverterDynamics, BUCK_PARAM_RESCALING
+from ..buck_converter_classes import BuckConverterDynamics
 
 import numpy as np
 import torch
@@ -52,6 +52,7 @@ class BaseBuckEstimator(nn.Module, ABC):
     ) -> None:
         super().__init__()
         
+        self.param_init = param_init
         self.param_rescaling = self._define_parameter_rescaling()
         self._initialize_log_parameters(param_init)
         self.system_dynamics: SystemDynamics = self._define_system_dynamics()
@@ -108,7 +109,7 @@ class BaseBuckEstimator(nn.Module, ABC):
         for k in self._list_keys:
             plist: nn.ParameterList = getattr(self, f"log__{k}")
             data[k] = [p for p in plist]
-        return Parameters(**data)
+        return type(self.param_init)(**data)
 
     def get_estimates(self) -> Parameters:
         """Return current parameters in physical units (and inverse scaling)."""

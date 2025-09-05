@@ -46,7 +46,19 @@ class LaplaceResultsComparer:
         self.posterior_dictionary: PosteriorDictionary = posterior_dictionary or {}
         if file_pattern:
             self.FILE_PATTERN = file_pattern
-
+            
+        # units per parameter, from the first loaded posterior
+        all_units = {}
+        for runs in self.posterior_dictionary.values():
+            for lfit in runs.values():
+                for pname, unit in lfit.param_units.items():
+                    if pname in all_units:
+                        if all_units[pname] != unit:
+                            raise ValueError(f"Conflicting units for parameter '{pname}': '{all_units[pname]}' vs '{unit}'")
+                    else:
+                        all_units[pname] = unit
+        self.units = Parameters(**all_units)    
+            
     # ------------ Label helpers ------------
     def _resolve_labels(self, labels: Iterable[Union[int, str]]) -> List[str]:
         return LaplaceDictionaryLoader._resolve_labels(self.group_number_dict, labels)
@@ -298,7 +310,7 @@ class LaplaceResultsComparer:
                     ax.legend(loc="best")
 
             # engineering units on x-axis
-            LaplacePosteriorPlotter._format_abs_axis_with_unit(ax, pname)
+            LaplacePosteriorPlotter._format_abs_axis_with_unit(ax, pname, self.units)
 
         # hide unused axes
         for k_ax in range(len(param_names), len(axes)):
@@ -494,7 +506,7 @@ class LaplaceResultsComparer:
                 )
 
             # units/format
-            LaplacePosteriorPlotter._format_abs_axis_with_unit(ax, name)
+            LaplacePosteriorPlotter._format_abs_axis_with_unit(ax, name, self.units)
 
         # hide extra axes
         for j in range(len(param_names), len(axes)):

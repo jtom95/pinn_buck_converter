@@ -36,11 +36,44 @@ def _is_tensor_sequence(x: Any) -> bool:
     return isinstance(x, torch.Tensor) and x.ndim >= 1
 
 
+class Units:
+    def __init__(self, **kwargs: str):
+        self._units: Dict[str, str] = dict(kwargs)
+
+    def __getitem__(self, key: str) -> Optional[str]:
+        return self._units.get(key)
+
+    def __setitem__(self, key: str, value: str) -> None:
+        self._units[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self._units[key]
+
+    def items(self) -> Iterable[Tuple[str, str]]:
+        return self._units.items()
+    
+    def get_from_iterator_name(self, name: str, default: Optional[str] = None) -> Optional[str]:
+        if name in self._units:
+            return self._units[name]
+        # try to strip trailing digits for flattened names
+        m = re.match(r"^(.*?)(\d+)$", name)
+        if m:
+            base = m.group(1)
+            return self._units.get(base, default)
+        return default
+    
+    @classmethod
+    def make_default(cls, parameters: "Parameters", default_unit: str = "") -> "Units":
+        unit_dict = {}  
+        for name, _ in parameters.params.items():
+            unit_dict[name] = default_unit
+        return cls(**unit_dict)
+            
 
 class Parameters:
     DEFAULT_FILE_PATTERN: Final = "*.params.json"
     _reserved_attrs = {
-        "params", "DEFAULT_FILE_PATTERN", "_reserved_attrs",
+        "params", "_units", "DEFAULT_FILE_PATTERN", "_reserved_attrs",
         "iterator", "__len__", "expand", "get_all_values", "get_all_names",
         "get_from_iterator_name", "save", "load", "_to_jsonable",
         "from_mapping", "build_from_flat", "__getitem__", "__setitem__",
@@ -54,6 +87,23 @@ class Parameters:
         super().__setattr__("params", dict(kwargs))
         # lock the set of keys
         super().__setattr__("_frozen_keys", frozenset(self.params.keys()))
+        # assign the physical units (empty by default)
+        self._assign_unit_class(Units())
+        
+    @property
+    def units(self) -> Optional[Units]:
+        return self._units
+    
+    def _assign_unit_class(self, units: Units) -> None:
+        # check that all keys in units are valid parameter names
+        for key in units._units.keys():
+            if key not in self.params:
+                raise ValueError(f"Unit key '{key}' not found in parameters.")
+        # add the default unit for any missing keys
+        for key in self.params.keys():
+            if key not in units._units:
+                units[key] = ""
+        self._units = units
 
     # ========== iteration / flattening ==========
     def iterator(self) -> Iterator[Tuple[str, Scalar]]:
@@ -82,6 +132,13 @@ class Parameters:
         if name in self.params:
             return self.params[name]
         raise AttributeError(f"{type(self).__name__} has no attribute '{name}'")
+    
+    def __repr__(self) -> str:
+        parts = []
+        for name, value in self.iterator(): 
+            unit = self.units.get_from_iterator_name(name, "")
+            parts.append(f"{name}: {value}<{unit}>" if unit else f"{name}: <{value}>")
+        return " - ".join(parts)
 
     def __setattr__(self, name: str, value: Any) -> None:
         # allow normal setting for reserved/internal attrs
@@ -189,7 +246,9 @@ class Parameters:
 
             new_params[key] = reshaped
 
-        return Parameters(**new_params)
+        out = type(self).build_from_flat(new_params)
+        out._assign_unit_class(self.units)  # copy units
+        return out
 
     # ========== (de)serialization ==========
     def save(self, path: Union[str, Path]) -> None:

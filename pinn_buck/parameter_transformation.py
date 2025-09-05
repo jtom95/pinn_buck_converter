@@ -30,7 +30,7 @@ def make_log_param(params: Parameters, rescaling: Optional[Parameters] = None) -
         scale = rescaling.get_from_iterator_name(name, 1.0) if rescaling else 1.0
         scaled_items.append((name, _to_log(value, scale)))
 
-    return Parameters.build_from_flat(scaled_items)
+    return type(params).build_from_flat(scaled_items)
 
 
 def reverse_log_param(log_param: Parameters, rescaling: Optional[Parameters] = None) -> Parameters:
@@ -43,4 +43,4 @@ def reverse_log_param(log_param: Parameters, rescaling: Optional[Parameters] = N
         s = rescaling.get_from_iterator_name(name, 1.0) if rescaling else 1.0
         lv = torch.as_tensor(log_value, dtype=torch.float32)
         items.append((name, torch.exp(lv) / s))
-    return Parameters.build_from_flat(items)
+    return type(log_param).build_from_flat(items)

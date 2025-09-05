@@ -33,11 +33,14 @@ from pinn_buck.io import LoaderH5
 from scipy.stats import lognorm
 from pinn_buck.parameters.parameter_class import Parameters
 
+from pinn_buck.buck_converter_classes import ParameterArchive
+
 
 # Nominals and linear-space relative tolerances
 PRIOR_SIGMA = rel_tolerance_to_sigma(
-    ParameterConstants.REL_TOL, number_of_stds_in_relative_tolerance=1
+    ParameterArchive.REL_TOL, number_of_stds_in_relative_tolerance=1
     )
+NOMINAL_VALUES = ParameterArchive.NOMINAL
 
 # %%
 import torch
@@ -136,8 +139,7 @@ io = LoaderH5(db_dir, h5filename)
 ### the jacobians are independent of the measurement so we can calculate them once
 io.load("10 noise")
 X = torch.tensor(io.M.data, device=device)
-model = BuckParamEstimator(param_init = ParameterConstants.NOMINAL).to(device)
-
+model = BuckParamEstimator(param_init = NOMINAL_VALUES).to(device)
 
 covariance_matrices = []
 jacobian_estimator = JacobianEstimator()
@@ -162,7 +164,6 @@ for label, data_covariance in noise_power_dict.items():
     
 
     covariance_matrices.append(covariance_matrix)
-
 
 
 print("Covariance matrices and VIF factors calculated for ADC noise, 5 LSB noise, and 10 LSB noise.")
@@ -256,12 +257,12 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     # Train the model on the noisy measurement
     X = torch.tensor(io.M.data, device=device)
-    model = BuckParamEstimator(param_init = ParameterConstants.NOMINAL).to(device)
+    model = BuckParamEstimator(param_init = NOMINAL_VALUES).to(device)
 
     L = l_dict[group_number]
-    
+
     map_loss = MAPLoss(
-        initial_params=ParameterConstants.NOMINAL,
+        initial_params=NOMINAL_VALUES,
         initial_sigma=PRIOR_SIGMA,
         loss_likelihood_function=loss_whitened,  # loss function for the forward-backward pass
         residual_function=basic_residual,
@@ -293,7 +294,7 @@ for idx, group_number in enumerate(l_dict.keys()):
     laplace_posteriors[group_name] = laplace_posterior
     trained_models[group_name] = trainer.optimized_model()
     trained_runs[group_name] = trainer.history
-    
+
     trainer.history.get_best_parameters().save(out_dir / f"best_params_{group_name}.json")
     trainer.history.save(out_dir / f"history_{group_name}.csv")
     print("\n \n \n")
