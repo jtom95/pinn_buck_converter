@@ -54,14 +54,35 @@ class Trainer:
             callbacks=self._history["callbacks"],
         )
 
+
     @staticmethod
     def print_parameters(parameters: Parameters):
-        print(
-            f"Parameters: L={parameters.L:.3e}, RL={parameters.RL:.3e}, C={parameters.C:.3e}, ",
-            f"RC={parameters.RC:.3e}, Rdson={parameters.Rdson:.3e}, ",
-            f"Rloads=[{', '.join(f'{r:.3e}' for r in parameters.Rloads)}], ",
-            f"Vin={parameters.Vin:.3f}, VF={parameters.VF:.3e}",
-        )
+        """
+        Print all parameters in a generic way.
+        Scalars -> scientific notation
+        Lists / sequences -> formatted comma-separated
+        """
+        parts = []
+        for name, value in parameters.iterator():
+            if isinstance(value, (int, float)):
+                parts.append(f"{name}={value:.3e}")
+            elif isinstance(value, torch.Tensor):
+                if value.ndim == 0:  # scalar tensor
+                    parts.append(f"{name}={value.item():.3e}")
+                else:
+                    raise ValueError("The Parameters.iterator() method should not return multi-dimensional tensors.")
+            else:
+                raise ValueError("The Parameters.iterator() method should not return non-numeric types.")
+            #     else:  # tensor with multiple entries
+            #         vals = ", ".join(f"{v.item():.3e}" for v in value.flatten())
+            #         parts.append(f"{name}=[{vals}]")
+            # elif isinstance(value, (list, tuple)):
+            #     vals = ", ".join(f"{float(v):.3e}" for v in value)
+            #     parts.append(f"{name}=[{vals}]")
+            # else:
+            #     # fallback: just str()
+            #     parts.append(f"{name}={value}")
+        print("Parameters: " + ", ".join(parts))
 
     def optimized_model(self, optimizer_type: Optional[str] = None) -> BaseBuckEstimator:
         best_parameters = self.history.get_best_parameters(optimizer_type)
@@ -382,7 +403,7 @@ class Trainer:
 
         # # → LBFGS
         # LBFGS optimization tends to find stable solutions that also minimize the gradient norm.
-        # This will be useful when we want to compute the Laplace posterior, which relies on the Hessian of the loss function.        
+        # This will be useful when we want to compute the Laplace posterior, which relies on the Hessian of the loss function.
         self.lbfgs_fit(X, evaluate_initial_loss=True, update_loss_callback=update_loss_callback, update_every=update_every_lbfgs)
 
         # After training, we can save the history of losses and parameters
