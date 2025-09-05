@@ -14,24 +14,24 @@ project_root = Path.cwd()
 sys.path.append(str(project_root))
 
 
-from pinn_buck.parameters.parameter_class import Parameters
-from pinn_buck.constants import ParameterConstants
+from circuit_parameter_estimator.parameters.parameter_class import Parameters
+from circuit_parameter_estimator.constants import ParameterConstants
 
 # load measurement interface
-from pinn_buck.io import Measurement
-from pinn_buck.noise import add_noise_to_Measurement
+from circuit_parameter_estimator.io import Measurement
+from circuit_parameter_estimator.noise import add_noise_to_Measurement
 
-from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
-from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
-from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator, BuckParamEstimatorFwdBck
-from pinn_buck.model_results.history import TrainingHistory
-from pinn_buck.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
+from circuit_parameter_estimator.data_covariance.auxiliary import rel_tolerance_to_sigma
+from circuit_parameter_estimator.parameters.parameter_transformation import make_log_param, reverse_log_param
+from circuit_parameter_estimator.model.model_base import BuckParamEstimator, BaseBuckEstimator, BuckParamEstimatorFwdBck
+from circuit_parameter_estimator.model_results.history import TrainingHistory
+from circuit_parameter_estimator.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
 
-from pinn_buck.io import LoaderH5
+from circuit_parameter_estimator.io import LoaderH5
 
 # %%
 from scipy.stats import lognorm
-from pinn_buck.parameters.parameter_class import Parameters
+from circuit_parameter_estimator.parameters.parameter_class import Parameters
 
 
 PRIOR_SIGMA = rel_tolerance_to_sigma(
@@ -71,12 +71,12 @@ import math
 # %%
 from dataclasses import dataclass
 
-from pinn_buck.model.map_loss import MAPLoss
-from pinn_buck.data_noise_modeling.jacobian_estimation import JacobianEstimator, JacobianEstimatorBase, FwdBckJacobianEstimator
-from pinn_buck.data_noise_modeling.covariance_matrix_function_archive import covariance_matrix_on_basic_residuals, generate_residual_covariance_matrix, chol
-from pinn_buck.model.residual_time_correlation import ResidualDiagnosticsGaussian
+from circuit_parameter_estimator.model.map_loss import MAPLoss
+from circuit_parameter_estimator.data_covariance.jacobian_estimation import JacobianEstimator, JacobianEstimatorBase, FwdBckJacobianEstimator
+from circuit_parameter_estimator.data_covariance.covariance_matrix_function_archive import covariance_matrix_on_basic_residuals, generate_residual_covariance_matrix, chol
+from circuit_parameter_estimator.model.residual_time_correlation import ResidualDiagnosticsGaussian
 # from pinn_buck.model.trainer_auxiliary_functions import calculate_covariance_matrix, calculate_inflation_factor
-from pinn_buck.model.residuals import basic_residual
+from circuit_parameter_estimator.model.residuals import basic_residual
 
 # %%
 ## Noise Power
@@ -170,13 +170,13 @@ def callback_function_on_map(
 
 # %%
 from typing import Dict
-from pinn_buck.model.trainer import Trainer, TrainingConfigs
-from pinn_buck.laplace_posterior_fitting import LaplaceApproximator, LaplacePosterior
+from circuit_parameter_estimator.model.trainer import Trainer, TrainingConfigs
+from circuit_parameter_estimator.laplace_posterior_fitting import LaplaceApproximator, LaplacePosterior
 
-from pinn_buck.model.residuals import basic_residual
-from pinn_buck.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
-from pinn_buck.model.map_loss import MAPLoss
-from pinn_buck.noise import add_noise_to_Measurement
+from circuit_parameter_estimator.model.residuals import basic_residual
+from circuit_parameter_estimator.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
+from circuit_parameter_estimator.model.map_loss import MAPLoss
+from circuit_parameter_estimator.noise import add_noise_to_Measurement
 
 
 set_seed(123)

@@ -5,14 +5,14 @@ import matplotlib.pyplot as plt
 # change the working directory to the root of the project
 sys.path.append(str(Path.cwd()))
 
-from pinn_buck.model_results.history import TrainingHistory
-from pinn_buck.model_results.ploting_comparisons import ResultsComparerTwo
-from pinn_buck.constants import ParameterConstants, MeasurementGroupArchive
-from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
-from pinn_buck.laplace_posterior_fitting import LaplacePosterior
-from pinn_buck.laplace_posterior_plotting import LaplacePosteriorPlotter, LaplaceDictionaryLoader
-from pinn_buck.laplace_posterior_plotting_comparison import LaplaceResultsComparer
-from pinn_buck.parameters.parameter_class import Parameters
+from circuit_parameter_estimator.model_results.history import TrainingHistory
+from circuit_parameter_estimator.model_results.ploting_comparisons import ResultsComparerTwo
+from circuit_parameter_estimator.constants import ParameterConstants, MeasurementGroupArchive
+from circuit_parameter_estimator.data_covariance.auxiliary import rel_tolerance_to_sigma
+from circuit_parameter_estimator.laplace_posterior_fitting import LaplacePosterior
+from circuit_parameter_estimator.laplace_posterior_plotting import LaplacePosteriorPlotter, LaplaceDictionaryLoader
+from circuit_parameter_estimator.laplace_posterior_plotting_comparison import LaplaceResultsComparer
+from circuit_parameter_estimator.parameters.parameter_class import Parameters
 
 TRUE_PARAMS = ParameterConstants.TRUE
 NOMINAL = ParameterConstants.NOMINAL

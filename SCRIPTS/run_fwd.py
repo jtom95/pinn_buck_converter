@@ -14,26 +14,26 @@ project_root = Path.cwd()
 sys.path.append(str(project_root))
 
 
-from pinn_buck.parameters.parameter_class import Parameters
-from pinn_buck.constants import ParameterConstants
+from circuit_parameter_estimator.parameters.parameter_class import Parameters
+from circuit_parameter_estimator.constants import ParameterConstants
 
 # load measurement interface
-from pinn_buck.io import Measurement
-from pinn_buck.noise import add_noise_to_Measurement
-from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
+from circuit_parameter_estimator.io import Measurement
+from circuit_parameter_estimator.noise import add_noise_to_Measurement
+from circuit_parameter_estimator.data_covariance.auxiliary import rel_tolerance_to_sigma
 
-from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
-from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator, BuckParamEstimatorFwdBck
-from pinn_buck.model_results.history import TrainingHistory
-from pinn_buck.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
+from circuit_parameter_estimator.parameters.parameter_transformation import make_log_param, reverse_log_param
+from circuit_parameter_estimator.model.model_base import BuckParamEstimator, BaseBuckEstimator, BuckParamEstimatorFwdBck
+from circuit_parameter_estimator.model_results.history import TrainingHistory
+from circuit_parameter_estimator.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
 
-from pinn_buck.io import LoaderH5
+from circuit_parameter_estimator.io import LoaderH5
 
 # %%
 from scipy.stats import lognorm
-from pinn_buck.parameters.parameter_class import Parameters
+from circuit_parameter_estimator.parameters.parameter_class import Parameters
 
-from pinn_buck.buck_converter_classes import ParameterArchive
+from example_archives.buck_converter import ParameterArchive
 
 
 # Nominals and linear-space relative tolerances
@@ -64,42 +64,14 @@ from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from contextlib import contextmanager
 import math
 
-# let's define a function to convert relative tolerances to standard deviations
-# using the log-normal distribution assumption.
-# Previously, we assumed sigma = log(1 + rel_tol). This means we assume that the relative toleraces contain 1 standard deviation
-# of the data. Although usually the relative tolerances are defined as 2 or 3 standard deviations, we will use 1 standard deviation
-# since this is the worst case scenario.
-
-
-# def rel_tolerance_to_sigma(rel_tol: Parameters) -> Parameters:
-#     """Convert relative tolerances to standard deviations."""
-
-#     def _to_sigma(value: float) -> torch.Tensor:
-#         """Convert a relative tolerance to standard deviation."""
-#         return torch.log(torch.tensor(1 + value, dtype=torch.float32))
-
-#     return Parameters(
-#         L=_to_sigma(rel_tol.L),
-#         RL=_to_sigma(rel_tol.RL),
-#         C=_to_sigma(rel_tol.C),
-#         RC=_to_sigma(rel_tol.RC),
-#         Rdson=_to_sigma(rel_tol.Rdson),
-#         Rloads = [
-#             _to_sigma(rload) for rload in rel_tol.Rloads
-#         ],  # Rload1, Rload2, Rload3
-#         Vin=_to_sigma(rel_tol.Vin),
-#         VF=_to_sigma(rel_tol.VF),
-#     )
-
-
 # %%
 from dataclasses import dataclass
 
-from pinn_buck.model.map_loss import MAPLoss
-from pinn_buck.data_noise_modeling.jacobian_estimation import JacobianEstimator, JacobianEstimatorBase, FwdBckJacobianEstimator
-from pinn_buck.data_noise_modeling.covariance_matrix_function_archive import covariance_matrix_on_basic_residuals, generate_residual_covariance_matrix, chol
-from pinn_buck.model.trainer_auxiliary_functions import calculate_covariance_matrix, calculate_inflation_factor
-from pinn_buck.model.residuals import basic_residual
+from circuit_parameter_estimator.model.map_loss import MAPLoss
+from circuit_parameter_estimator.data_covariance.jacobian_estimation import JacobianEstimator, JacobianEstimatorBase, FwdBckJacobianEstimator
+from circuit_parameter_estimator.data_covariance.covariance_matrix_function_archive import covariance_matrix_on_basic_residuals, generate_residual_covariance_matrix, chol
+from circuit_parameter_estimator.model.trainer_auxiliary_functions import calculate_covariance_matrix, calculate_inflation_factor
+from circuit_parameter_estimator.model.residuals import basic_residual
 
 # %%
 ## Noise Power
@@ -188,24 +160,24 @@ for name, matrices in zip(["ADC noise", "5 LSB noise", "10 LSB noise"], covarian
 
 l_dict = {
     key: 
-        # chol(torch.eye(2))
-        chol(cov_matrix) 
+        chol(torch.eye(2))
+        # chol(cov_matrix) 
         for key, cov_matrix in zip([1, 3, 4], covariance_matrices)
         }
 
 
 # %%
 from typing import Dict
-from pinn_buck.model.trainer import Trainer, TrainingConfigs
-from pinn_buck.laplace_posterior_fitting import LaplaceApproximator, LaplacePosterior
+from circuit_parameter_estimator.model.trainer import Trainer, TrainingConfigs
+from circuit_parameter_estimator.laplace_posterior_fitting import LaplaceApproximator, LaplacePosterior
 
-from pinn_buck.model.residuals import basic_residual
-from pinn_buck.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
-from pinn_buck.model.map_loss import MAPLoss
+from circuit_parameter_estimator.model.residuals import basic_residual
+from circuit_parameter_estimator.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
+from circuit_parameter_estimator.model.map_loss import MAPLoss
 
 set_seed(123)
 device = "cpu"
-out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD"
+out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_EYE"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 run_configs = TrainingConfigs(
