@@ -28,7 +28,7 @@ def make_log_param(params: Parameters) -> Parameters:
 
     scaled_items = []
     for name, value in params.iterator():
-        scale = scales[name]
+        scale = scales.get(name, 1.0)
         scaled_items.append((name, _to_log(value, scale)))
 
     return Parameters.build_from_flat(scaled_items)
@@ -42,7 +42,7 @@ def reverse_log_param(log_param: Parameters) -> Parameters:
     scales = dict(ParameterConstants.SCALE.iterator())  # {"L": sL, "RL": sRL, "Rload1": sR1, ...}
     items = []
     for name, log_value in log_param.iterator():
-        s = torch.as_tensor(scales[name], dtype=torch.float32)
+        s = torch.as_tensor(scales.get(name, 1.0), dtype=torch.float32)
         lv = torch.as_tensor(log_value, dtype=torch.float32)
         items.append((name, torch.exp(lv) / s))
     return Parameters.build_from_flat(items)
