@@ -49,16 +49,16 @@ class ParameterConstants:
         VF=0.3,
     )
 
-    SCALE: Final = Parameters(
-        L = 1e4,
-        RL = 1e1,
-        C = 1e4,
-        RC = 1e1,
-        Rdson = 1e1,
-        Rloads = [1.0, 1.0, 1.0],
-        Vin = 1e-1,
-        VF = 1.0,
-    )
+    # SCALE: Final = Parameters(
+    #     L = 1e4,
+    #     RL = 1e1,
+    #     C = 1e4,
+    #     RC = 1e1,
+    #     Rdson = 1e1,
+    #     Rloads = [1.0, 1.0, 1.0],
+    #     Vin = 1e-1,
+    #     VF = 1.0,
+    # )
     
     
 

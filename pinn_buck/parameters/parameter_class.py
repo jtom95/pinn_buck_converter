@@ -134,9 +134,11 @@ class Parameters:
     def get_all_names(self) -> List[str]:
         return [k for k, _ in self.iterator()]
 
-    def get_from_iterator_name(self, name: str) -> float:
+    def get_from_iterator_name(self, name: str, default="raise error") -> float:
         flat = self.expand()
         if name not in flat:
+            if default != "raise error":
+                return default
             raise ValueError(f"Parameter '{name}' not found.")
         return flat[name]
 
