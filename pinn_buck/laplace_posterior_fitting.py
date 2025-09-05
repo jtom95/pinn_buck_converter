@@ -26,7 +26,6 @@ def _sigma_to_quantiles(n_sigma: float):
 
 class LaplacePosteriorConstants:
     DEFAULT_FILE_PATTERN = "*.laplace.json"
-    
 
 
 @dataclass
@@ -78,22 +77,22 @@ class LaplacePosterior:
         """
         
         # 1) scaled log mean/cov from Laplace (these correspond to log(param * scale))
-        mu_scaled = self.theta_log.cpu().numpy()
-        var_scaled = np.diag(self.Sigma_log.cpu().numpy())
+        mu_log = self.theta_log.cpu().numpy()
+        var_log = np.diag(self.Sigma_log.cpu().numpy())
 
-        # 2) build name->scale map from the Parameters-based SCALE using the same iterator()
-        scale_map = {name: val for name, val in ParameterConstants.SCALE.iterator()}
-        # align scales to the LaplacePosterior ordering
-        scales = np.array([scale_map[name] for name in self.param_names], dtype=np.float64)
+        # # 2) build name->scale map from the Parameters-based SCALE using the same iterator()
+        # scale_map = {name: val for name, val in ParameterConstants.SCALE.iterator()}
+        # # align scales to the LaplacePosterior ordering
+        # scales = np.array([scale_map[name] for name in self.param_names], dtype=np.float64)
 
-        # 3) unscale in log-space:
-        # Currently the parameters are log(param * scale), in order to reobtain the original params:
-        # log(param) = log([param * scale]/scale) = log([param*scale]) - log(scale)
-        mu_phys = mu_scaled - np.log(scales)
-        var_phys = var_scaled  # unchanged when subtracting a constant
+        # # 3) unscale in log-space:
+        # # Currently the parameters are log(param * scale), in order to reobtain the original params:
+        # # log(param) = log([param * scale]/scale) = log([param*scale]) - log(scale)
+        # mu_phys = mu_scaled - np.log(scales)
+        # var_phys = var_scaled  # unchanged when subtracting a constant
 
         # 4) scipy's lognorm: s = sigma, scale = exp(mu)
-        return [lognorm(s=np.sqrt(v), scale=np.exp(m)) for m, v in zip(mu_phys, var_phys)]
+        return [lognorm(s=np.sqrt(v), scale=np.exp(m)) for m, v in zip(mu_log, var_log)]
 
     # ----------------------------------------------------------------
     def print_param_uncertainty(
@@ -317,6 +316,11 @@ class LaplaceApproximator:
             return self.loss_fn(parameter_guess=theta_logparams, preds=preds, targets=targets)
 
         return closure
+    
+    @property
+    def param_names(self) -> List[str]:
+        """List of parameter names in the order matching the flat vectors."""
+        return [d for d, _ in self._mapping]
 
     def fit(self, X: torch.Tensor) -> LaplacePosterior:
         """
@@ -348,6 +352,23 @@ class LaplaceApproximator:
         I = torch.eye(H.shape[0], device=H.device)
         Sigma_log = torch.linalg.inv(H + self.damping * I)
 
+        # unscale the Sigma_log
+        if self.model.param_rescaling is not None:
+            scale_map = {name: val for name, val in self.model.param_rescaling.iterator()}
+            # 2) build name->scale map from the Parameters-based SCALE using the same iterator()
+            
+            # align scales to the LaplacePosterior ordering
+            scales = torch.tensor([scale_map[name] for name in self.param_names], dtype=torch.float64)
+
+            # 3) unscale in log-space:
+            # Currently the parameters are log(param * scale), in order to reobtain the original params:
+            # log(param) = log([param * scale]/scale) = log([param*scale]) - log(scale)
+            mu_log_phys = theta_map.detach() - torch.log(scales)
+            # Variance unchanged when subtracting a constant
+        else:
+            mu_log_phys = theta_map.detach()
+            # Variance unchanged when subtracting a constant
+
         # physical-space mean in same flat order
         est = self.model.get_estimates()
         theta_phys = torch.tensor([v for _, v in est.iterator()], device=Sigma_log.device)
@@ -356,13 +377,12 @@ class LaplaceApproximator:
         Sigma_phys = J @ Sigma_log @ J.T
 
         return LaplacePosterior(
-            theta_log=theta_map.detach(),
+            theta_log=mu_log_phys,
             Sigma_log=Sigma_log,
             theta_phys=theta_phys,
             Sigma_phys=Sigma_phys,
-            param_names=[d for d, _ in self._mapping],  # display order
+            param_names=self.param_names,  # display order
         )
-
 
     def fit_with_hac(
         self,
@@ -381,12 +401,12 @@ class LaplaceApproximator:
         NOT WORKING YET!
         Need to study the HAC covariance estimation theory better.
         """
-        
+
         raise NotImplementedError(
             "HAC Laplace approximation is not implemented yet. "
             "Please use the standard `fit` method instead."
         )
-        
+
         device = self.device
         X = X.to(device)
 

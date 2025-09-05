@@ -25,7 +25,7 @@ PRIOR_SIGMA = rel_tolerance_to_sigma(
 # from pinn_buck.plot_aux import place_shared_legend
 
 results_directory = Path.cwd() / "RESULTS" / "LIKELIHOODS"
-save_dir = results_directory / "FWD_VIF"
+save_dir = results_directory / "FWD"
 
 lplotter = LaplacePosteriorPlotter.from_dir(
     save_dir

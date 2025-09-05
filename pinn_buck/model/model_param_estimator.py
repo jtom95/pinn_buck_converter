@@ -20,7 +20,7 @@ from ..parameters.parameter_class import Parameters
 from .system_state_class import States
 from ..io import Measurement
 from .system_dynamics import SystemDynamics
-from ..buck_converter_classes import BuckConverterDynamics
+from ..buck_converter_classes import BuckConverterDynamics, BUCK_PARAM_RESCALING
 
 import numpy as np
 import torch
@@ -51,6 +51,8 @@ class BaseBuckEstimator(nn.Module, ABC):
         param_init: Parameters,
     ) -> None:
         super().__init__()
+        
+        self.param_rescaling = self._define_parameter_rescaling()
         self._initialize_log_parameters(param_init)
         self.system_dynamics: SystemDynamics = self._define_system_dynamics()
 
@@ -61,7 +63,7 @@ class BaseBuckEstimator(nn.Module, ABC):
         - Python list/tuple -> nn.ParameterList (one Parameter per element)
         - torch.Tensor with ndim>=1 -> nn.ParameterList (split along dim 0)
         """
-        log_params = make_log_param(param_init)
+        log_params = make_log_param(param_init, rescaling=self.param_rescaling)
 
         # keep track of what we created so we can rebuild Parameters later
         self._scalar_keys: list[str] = []
@@ -110,7 +112,7 @@ class BaseBuckEstimator(nn.Module, ABC):
 
     def get_estimates(self) -> Parameters:
         """Return current parameters in physical units (and inverse scaling)."""
-        return reverse_log_param(self.logparams)
+        return reverse_log_param(self.logparams, self.param_rescaling)
 
     def _logparam_name_map(self) -> list[tuple[str, str]]:
         """
@@ -154,6 +156,10 @@ class BaseBuckEstimator(nn.Module, ABC):
         k4 = self.system_dynamics.dynamics(states + dh * k3, params, controls)
 
         return states + (dh / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
+    
+    def _define_parameter_rescaling(self) -> Optional[Parameters | None]:
+        """Define the parameter rescaling factors."""
+        return None
 
     @abstractmethod
     def _define_system_dynamics(self) -> SystemDynamics:
@@ -193,6 +199,9 @@ class BaseBuckEstimator(nn.Module, ABC):
 
 class BuckParamEstimator(BaseBuckEstimator):
     """Physics‑informed NN for parameter estimation in a buck converter."""
+    def _define_parameter_rescaling(self) -> Optional[Parameters | None]:
+        return None
+    
     def _define_system_dynamics(self) -> SystemDynamics:
         return BuckConverterDynamics()
 
@@ -248,6 +257,9 @@ class BuckParamEstimator(BaseBuckEstimator):
 
 class BuckParamEstimatorFwdBck(BaseBuckEstimator):
     """Physics‑informed NN for parameter estimation in a buck converter."""
+    
+    def _define_system_dynamics(self) -> SystemDynamics:
+        return BuckConverterDynamics()
 
     def forward(self, X: torch.Tensor):
         """
@@ -265,20 +277,52 @@ class BuckParamEstimatorFwdBck(BaseBuckEstimator):
         i, v = X[..., 0], X[..., 1]
         D, dt = X[..., 2], X[..., 3]
 
-        p = self.get_estimates().expand_torch_sequences()
+        input_states_fwd = States({"i": i[:-1], "v": v[:-1]})
+        input_states_bck = States({"i": i[1:], "v": v[1:]})
+        controls = {"D": D[:-1]}
+        time_steps = dt[:-1]
+        
+        params = self.get_estimates().expand_torch_sequences()
 
         # Forward and backward predictions (vectorized)
-        fwd_pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)
-        bck_pred = self._rk4_step(i[1:], v[1:], D[:-1], dt[:-1], p, sign=-1)
-        # note that in the bck_pred we use D[:-1] and dt[:-1], this is because we want to predict the
-        # voltages and currents at the time n, given their values after the dt time at time n+1. However,
-        # D and dt refer to the time step from n to n+1, so we need to use the same D and dt as in the forward prediction.
+        out_states_fwd = self._rk4_step(
+            time_steps=time_steps, 
+            states=input_states_fwd, 
+            params=params, 
+            controls=controls, 
+            sign=+1
+            )
 
-        # transform the tuple into a tensor by stacking on the last dimension
-        fwd_pred = torch.stack(fwd_pred, dim=-1)  # shape (B, T, 2)
-        bck_pred = torch.stack(bck_pred, dim=-1)  # shape (B, T, 2)
+        out_states_bck = self._rk4_step(
+            time_steps=time_steps, 
+            states=input_states_bck, 
+            params=params, 
+            controls=controls, 
+            sign=-1
+            )
+        
+        pred_fwd = torch.stack([out_states_fwd["i"], out_states_fwd["v"]], dim=-1)  # shape (B, T, 2)
+        pred_bck = torch.stack([out_states_bck["i"], out_states_bck["v"]], dim=-1)  # shape (B, T, 2)
+        return torch.stack((pred_fwd, pred_bck), dim=0)  # shape (2, B, T, 2)
 
-        return torch.stack((fwd_pred, bck_pred), dim=0)  # shape (2, B, T, 2)
+        # # transform the tuple into a tensor by stacking on the last dimension
+        # pred = torch.stack([out_states["i"], out_states["v"]], dim=-1)  # shape (B, T, 2)
+
+
+        # p = self.get_estimates().expand_torch_sequences()
+
+        # # Forward and backward predictions (vectorized)
+        # fwd_pred = self._rk4_step(i[:-1], v[:-1], D[:-1], dt[:-1], p, sign=+1)
+        # bck_pred = self._rk4_step(i[1:], v[1:], D[:-1], dt[:-1], p, sign=-1)
+        # # note that in the bck_pred we use D[:-1] and dt[:-1], this is because we want to predict the
+        # # voltages and currents at the time n, given their values after the dt time at time n+1. However,
+        # # D and dt refer to the time step from n to n+1, so we need to use the same D and dt as in the forward prediction.
+
+        # # transform the tuple into a tensor by stacking on the last dimension
+        # fwd_pred = torch.stack(fwd_pred, dim=-1)  # shape (B, T, 2)
+        # bck_pred = torch.stack(bck_pred, dim=-1)  # shape (B, T, 2)
+
+        # return torch.stack((fwd_pred, bck_pred), dim=0)  # shape (2, B, T, 2)
 
     def targets(self, X, **kwargs) -> torch.Tensor:
         """

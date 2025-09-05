@@ -74,7 +74,7 @@ class JacobianEstimatorBase(ABC):
 
 
 class JacobianEstimator(JacobianEstimatorBase):
-    # -------- single-time-index Jacobian on a (B,F) slice --------
+    ## -------- single-time-index Jacobian on a (B,F) slice --------
     @staticmethod
     def estimate_J_single_t(
         Xi: torch.Tensor,  # (B, F) for one specific grid slice
@@ -185,6 +185,9 @@ class JacobianEstimator(JacobianEstimatorBase):
 
             Jmean = (Jsum / float(n_samples)).transpose(0, 1)  # -> (F, S)
             out[grid_idx] = Jmean
+
+        # rotate the grid so that the last two axes are (S, F): J = ∂y/∂x
+        out = out.mT
 
         # Compatibility path (by_series flag kept for API parity):
         # with multi-d grids, by_series=False would mean averaging across all grid points.

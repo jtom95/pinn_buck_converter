@@ -1,7 +1,7 @@
 from .model.system_dynamics import SystemDynamics
 from .model.system_state_class import States
 from .parameters.parameter_class import Parameters, Scalar, Seq
-from typing import List, Dict
+from typing import List, Dict, Final
 import torch
 
 class BuckConverterParams(Parameters):
@@ -13,7 +13,7 @@ class BuckConverterParams(Parameters):
     Rloads: Seq  # Rload1, Rload2, Rload3
     Vin: Scalar
     VF: Scalar
-    
+
     def __init__(
         self,
         L: Scalar,
@@ -35,6 +35,17 @@ class BuckConverterParams(Parameters):
             Vin=Vin,
             VF=VF,
         )
+
+BUCK_PARAM_RESCALING: Final = BuckConverterParams(
+    L=1e4,
+    RL=1e1,
+    C=1e4,
+    RC=1e1,
+    Rdson=1e1,
+    Rloads=[1.0, 1.0, 1.0],
+    Vin=1e-1,
+    VF=1.0,
+)
 
 
 class BuckConverterDynamics(SystemDynamics):
