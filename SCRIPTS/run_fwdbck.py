@@ -122,23 +122,13 @@ jacobian_estimator = FwdBckJacobianEstimator()
 for label, data_covariance in noise_power_dict.items():
     io.load(label)  
     X = torch.tensor(io.M.data, device=device)
-    jac_fwd = jacobian_estimator.estimate_Jacobian(
+    jac_fwd, jac_bck = jacobian_estimator.estimate_Jacobian(
         X, model, 
-        direction="forward",
         number_of_samples=500, 
         dtype=torch.float64
     )[
         ..., :2, :2
     ]  # keep a size of (T, 2, 2)
-
-    jac_bck = jacobian_estimator.estimate_Jacobian(
-        X, model, 
-        direction="backward",
-        number_of_samples=500, 
-        dtype=torch.float64
-    )[
-        ..., :2, :2
-    ]
     
     cov_matrix_fwd = generate_residual_covariance_matrix(
         data_covariance=data_covariance,

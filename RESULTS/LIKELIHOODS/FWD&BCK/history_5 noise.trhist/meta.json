@@ -1,11 +1,11 @@
 {
   "version": 1,
   "meta_cols": [
-    "callbacks",
-    "loss",
     "epoch",
-    "optimizer",
-    "learning_rate"
+    "callbacks",
+    "learning_rate",
+    "loss",
+    "optimizer"
   ],
   "param_cols": [
     "L",
