@@ -5,18 +5,13 @@ import matplotlib.pyplot as plt
 # change the working directory to the root of the project
 sys.path.append(str(Path.cwd()))
 
-from pinn_buck.model_results.history import TrainingHistory
-from pinn_buck.model_results.ploting_comparisons import ResultsComparerTwo
-from pinn_buck.constants import ParameterConstants, MeasurementGroupArchive
-from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
-from pinn_buck.laplace_posterior_fitting import LaplacePosterior
-from pinn_buck.laplace_posterior_plotting import LaplacePosteriorPlotter, LaplaceDictionaryLoader
-from pinn_buck.laplace_posterior_plotting_comparison import LaplaceResultsComparer
+from circuit_parameter_estimator.data_covariance.auxiliary import rel_tolerance_to_sigma
+from circuit_parameter_estimator.laplace_posterior.plotting import LaplacePosteriorPlotter
+from circuit_parameter_estimator.examples_archive.buck_converter import ParameterArchive, MeasurementGroupArchive
 
-
-TRUE_PARAMS = ParameterConstants.TRUE
-NOMINAL = ParameterConstants.NOMINAL
-REL_TOL = ParameterConstants.REL_TOL
+TRUE_PARAMS = ParameterArchive.TRUE
+NOMINAL = ParameterArchive.NOMINAL
+REL_TOL = ParameterArchive.REL_TOL
 PRIOR_SIGMA = rel_tolerance_to_sigma(
     REL_TOL, number_of_stds_in_relative_tolerance=1
 )  # transforms relative tolerance to the value of the standard deviation
@@ -25,10 +20,11 @@ PRIOR_SIGMA = rel_tolerance_to_sigma(
 # from pinn_buck.plot_aux import place_shared_legend
 
 results_directory = Path.cwd() / "RESULTS" / "LIKELIHOODS"
-save_dir = results_directory / "RESD1"
+save_dir = results_directory / "FWD"
 
 lplotter = LaplacePosteriorPlotter.from_dir(
-    save_dir
+    save_dir,
+    group_number_dict=MeasurementGroupArchive.SHUAI_ORIGINAL,
 )
 
 lplotter.plot_laplace_posteriors(true_params=TRUE_PARAMS, ncols=3)

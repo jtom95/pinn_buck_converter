@@ -1,0 +1,18 @@
+from abc import ABC, abstractmethod
+from typing import Mapping, Dict, List, Tuple, Callable
+import torch
+
+from .system_state import States
+from circuit_parameter_estimator.parameters.parameter_class import Parameters
+
+
+class SystemDynamics(ABC):
+    """
+    Defines the physical system:
+      - dynamics(start_states, params) -> next_states
+    """
+
+    @abstractmethod
+    def dynamics(self, start_states: States, params: Parameters, controls: Dict[str, torch.Tensor] = None, **kwargs) -> States:
+        """Return derivatives for the **evolving** states keys"""
+        ...

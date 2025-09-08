@@ -1,12 +1,9 @@
 # %%
-from pathlib import Path
-from typing import List, Tuple
-import pandas as pd
-import matplotlib.pyplot as plt
 import os, sys
-
-import h5py
+from pathlib import Path
+import torch
 import numpy as np
+from typing import Dict
 
 
 # change the working directory to the root of the project
@@ -14,68 +11,47 @@ project_root = Path.cwd()
 sys.path.append(str(project_root))
 
 
-from pinn_buck.parameters.parameter_class import Parameters
-from pinn_buck.constants import ParameterConstants
-
-# load measurement interface
-from pinn_buck.io import Measurement
-from pinn_buck.noise import add_noise_to_Measurement
-
-from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
-from pinn_buck.parameter_transformation import make_log_param, reverse_log_param
-from pinn_buck.model.model_param_estimator import BuckParamEstimator, BaseBuckEstimator, BuckParamEstimatorFwdBck
-from pinn_buck.model_results.history import TrainingHistory
-from pinn_buck.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
-
-from pinn_buck.io import LoaderH5
-
-# %%
-from scipy.stats import lognorm
-from pinn_buck.parameters.parameter_class import Parameters
-
-
-PRIOR_SIGMA = rel_tolerance_to_sigma(
-    ParameterConstants.REL_TOL, number_of_stds_in_relative_tolerance=1
+# import the necessary modules from the package
+from circuit_parameter_estimator.data_loading_and_inspection.io import LoaderH5
+from circuit_parameter_estimator.examples_archive.buck_converter import (
+    BuckParamEstimatorFwdBck,
+    ParameterArchive,
+    BuckConverterParams,
+    MeasurementGroupArchive,
+)
+from circuit_parameter_estimator.data_covariance.auxiliary import rel_tolerance_to_sigma
+from circuit_parameter_estimator.optimization_loss.loss_function_archive import loss_whitened_fwbk
+from circuit_parameter_estimator.optimization_loss.map_loss import MAPLoss
+from circuit_parameter_estimator.data_covariance.jacobian_estimation import FwdBckJacobianEstimator
+from circuit_parameter_estimator.data_covariance.covariance_matrix_function_archive import (
+    covariance_matrix_on_basic_residuals,
+    generate_residual_covariance_matrix,
+    chol,
+)
+from circuit_parameter_estimator.residuals.residuals import basic_residual
+from circuit_parameter_estimator.model_trainer.trainer import Trainer, TrainingConfigs
+from circuit_parameter_estimator.laplace_posterior.fitting import (
+    LaplaceApproximator,
+    LaplacePosterior,
 )
 
+# %%  Nominals and linear-space relative tolerances
+PRIOR_SIGMA = rel_tolerance_to_sigma(
+    ParameterArchive.REL_TOL, number_of_stds_in_relative_tolerance=1
+)
+NOMINAL_VALUES = ParameterArchive.NOMINAL
 
-# %%
-import torch
-import torch.nn as nn
 
-
+# %% set random seeds for reproducibility
 def set_seed(seed: int = 1234):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+
 set_seed(123)
 device = "cpu"
 
-# %% [markdown]
-# ## Block-Diagonalized Covariance vs Full Covariance Fitting
-
-# %%
-from typing import Callable, Union, Iterable
-from torch.nn.utils import parameters_to_vector, vector_to_parameters
-from contextlib import contextmanager
-import math
-
-# let's define a function to convert relative tolerances to standard deviations
-# using the log-normal distribution assumption.
-# Previously, we assumed sigma = log(1 + rel_tol). This means we assume that the relative toleraces contain 1 standard deviation
-# of the data. Although usually the relative tolerances are defined as 2 or 3 standard deviations, we will use 1 standard deviation
-# since this is the worst case scenario.
-
-
-# %%
-from dataclasses import dataclass
-
-from pinn_buck.model.map_loss import MAPLoss
-from pinn_buck.data_noise_modeling.jacobian_estimation import JacobianEstimator, JacobianEstimatorBase, FwdBckJacobianEstimator
-from pinn_buck.data_noise_modeling.covariance_matrix_function_archive import covariance_matrix_on_basic_residuals, generate_residual_covariance_matrix, chol
-from pinn_buck.model.trainer_auxiliary_functions import calculate_covariance_matrix, calculate_inflation_factor
-from pinn_buck.model.residuals import basic_residual
 
 # %%
 ## Noise Power
@@ -112,28 +88,19 @@ db_dir = project_root.parent / "Databases"
 h5filename = "buck_converter_Shuai_processed.h5"
 io = LoaderH5(db_dir, h5filename)
 
+# %% Calculate covariance matrices for different noise levels
+# Note:
 ### the jacobians are independent of the measurement so we can calculate them once
-model = BuckParamEstimatorFwdBck(param_init = ParameterConstants.NOMINAL).to(device)
 
-
+model = BuckParamEstimatorFwdBck(param_init = NOMINAL_VALUES).to(device)
 covariance_matrices = []
 jacobian_estimator = FwdBckJacobianEstimator()
 
 for label, data_covariance in noise_power_dict.items():
     io.load(label)  
     X = torch.tensor(io.M.data, device=device)
-    jac_fwd = jacobian_estimator.estimate_Jacobian(
+    jac_fwd, jac_bck = jacobian_estimator.estimate_Jacobian(
         X, model, 
-        direction="forward",
-        number_of_samples=500, 
-        dtype=torch.float64
-    )[
-        ..., :2, :2
-    ]  # keep a size of (T, 2, 2)
-
-    jac_bck = jacobian_estimator.estimate_Jacobian(
-        X, model, 
-        direction="backward",
         number_of_samples=500, 
         dtype=torch.float64
     )[
@@ -146,15 +113,14 @@ for label, data_covariance in noise_power_dict.items():
         jac=jac_fwd,
         dtype=torch.float64
     )
-    
     cov_matrix_bck = generate_residual_covariance_matrix(
         data_covariance=data_covariance,
         residual_covariance_func=covariance_matrix_on_basic_residuals,
         jac=jac_bck,
         dtype=torch.float64
     )
-
     covariance_matrix = torch.stack([cov_matrix_fwd, cov_matrix_bck], dim=0)  # shape (2, T, 2, 2)
+    
     covariance_matrices.append(covariance_matrix)
 
 
@@ -188,17 +154,9 @@ l_dict = {key: dict(
     }
 
 
-# %%
-from typing import Dict
-from pinn_buck.model.trainer import Trainer, TrainingConfigs
-from pinn_buck.laplace_posterior_fitting import LaplaceApproximator, LaplacePosterior
+# %% # Train the model with different noise levels
 
-from pinn_buck.model.residuals import basic_residual
-from pinn_buck.model.loss_function_archive import loss_whitened, loss_whitened_fwbk
-from pinn_buck.model.map_loss import MAPLoss
-
-set_seed(123)
-device = "cpu"
+# create output directory where the results will be saved
 out_dir = Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD&BCK"
 out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -217,15 +175,9 @@ run_configs = TrainingConfigs(
 )
 
 
-GROUP_NUMBER_DICT = {
-    0: "ideal",
-    1: "ADC_error",
-    2: "Sync Error",
-    3: "5 noise",
-    4: "10 noise",
-    5: "ADC-Sync-5noise",
-    6: "ADC-Sync-10noise",
-}
+# Dictionary mapping the different measurement trials numbers to their names
+GROUP_NUMBER_DICT = MeasurementGroupArchive.SHUAI_ORIGINAL
+
 
 noisy_measurements = {}
 trained_models = {}
@@ -251,12 +203,12 @@ for idx, group_number in enumerate(l_dict.keys()):
 
     # Train the model on the noisy measurement
     X = torch.tensor(io.M.data, device=device)
-    model = BuckParamEstimatorFwdBck(param_init = ParameterConstants.NOMINAL).to(device)
+    model = BuckParamEstimatorFwdBck(param_init=NOMINAL_VALUES).to(device)
 
     L_fwd, L_bck = l_dict[group_number]["fwd"], l_dict[group_number]["bck"]
 
     map_loss = MAPLoss(
-        initial_params=ParameterConstants.NOMINAL,
+        initial_params=NOMINAL_VALUES,
         initial_sigma=PRIOR_SIGMA,
         loss_likelihood_function=loss_whitened_fwbk,  # loss function for the forward-backward pass
         residual_function=basic_residual,
@@ -290,7 +242,7 @@ for idx, group_number in enumerate(l_dict.keys()):
     trained_models[group_name] = trainer.optimized_model()
     trained_runs[group_name] = trainer.history
     trainer.history.get_best_parameters().save(out_dir / f"best_params_{group_name}.json")
-    trainer.history.save_to_csv(out_dir / f"history_{group_name}.csv")
+    trainer.history.save(out_dir / f"history_{group_name}")
     print("\n \n \n")
 
 

@@ -5,18 +5,15 @@ import matplotlib.pyplot as plt
 # change the working directory to the root of the project
 sys.path.append(str(Path.cwd()))
 
-from pinn_buck.model_results.history import TrainingHistory
-from pinn_buck.model_results.ploting_comparisons import ResultsComparerTwo
-from pinn_buck.constants import ParameterConstants, MeasurementGroupArchive
-from pinn_buck.data_noise_modeling.auxiliary import rel_tolerance_to_sigma
-from pinn_buck.laplace_posterior_fitting import LaplacePosterior
-from pinn_buck.laplace_posterior_plotting import LaplacePosteriorPlotter
-from pinn_buck.laplace_posterior_plotting_comparison import LaplaceResultsComparer
+from circuit_parameter_estimator.training_history.ploting_comparisons import ResultsComparerTwo
+from circuit_parameter_estimator.data_covariance.auxiliary import rel_tolerance_to_sigma
+from circuit_parameter_estimator.laplace_posterior.plotting_comparison import LaplaceResultsComparer
 
+from circuit_parameter_estimator.examples_archive.buck_converter import ParameterArchive, MeasurementGroupArchive
 
-TRUE_PARAMS = ParameterConstants.TRUE
-NOMINAL = ParameterConstants.NOMINAL
-REL_TOL = ParameterConstants.REL_TOL
+TRUE_PARAMS = ParameterArchive.TRUE
+NOMINAL = ParameterArchive.NOMINAL
+REL_TOL = ParameterArchive.REL_TOL
 PRIOR_SIGMA = rel_tolerance_to_sigma(
     REL_TOL, number_of_stds_in_relative_tolerance=1
 )  # transforms relative tolerance to the value of the standard deviation
@@ -25,12 +22,13 @@ PRIOR_SIGMA = rel_tolerance_to_sigma(
 # from pinn_buck.plot_aux import place_shared_legend
 
 directory_dict = {
-    "ResD1": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "RESD1",
-    "ResD1_vif": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "RESD1_VIF",
+    "fwd_vif": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD_VIF",
+    "fwd": Path.cwd() / "RESULTS" / "LIKELIHOODS" / "FWD",
 }
 
 rc = ResultsComparerTwo.from_dirs(
-    directory_dict
+    directory_dict,
+    group_number_dict=MeasurementGroupArchive.SHUAI_ORIGINAL
 )
 
 # Choose the labels you care about (ints map via the default dict; strings work too)
@@ -45,7 +43,11 @@ fig, ax = rc.plot_comparison(
 
 fig, axes = rc.plot_tracked(target=TRUE_PARAMS, labels=labels)
 
-laplace_comparer = LaplaceResultsComparer.from_dirs(directory_dict)
+laplace_comparer = LaplaceResultsComparer.from_dirs(
+    directory_dict, 
+    group_number_dict=MeasurementGroupArchive.SHUAI_ORIGINAL
+)
+
 laplace_comparer.plot_ci(ncols=4)
 laplace_comparer.plot_posteriors_grid(
     skip_labels=("ADC_error",),
